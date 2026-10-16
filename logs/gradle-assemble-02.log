@@ -1,0 +1,53 @@
+Calculating task graph as no cached configuration is available for tasks: assembleRelease
+> Task :app:generateReleaseAssets UP-TO-DATE
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preReleaseBuild UP-TO-DATE
+> Task :app:mergeReleaseNativeDebugMetadata NO-SOURCE
+> Task :app:desugarReleaseFileDependencies
+> Task :app:checkReleaseAarMetadata
+> Task :app:createReleaseCompatibleScreenManifests
+> Task :app:javaPreCompileRelease
+> Task :app:extractDeepLinksRelease
+> Task :app:checkReleaseDuplicateClasses
+> Task :app:writeReleaseAppMetadata
+> Task :app:writeReleaseSigningConfigVersions
+> Task :app:validateSigningRelease
+> Task :app:processReleaseNavigationResources
+> Task :app:generateReleaseResources
+> Task :app:mapReleaseSourceSetPaths
+> Task :app:compileReleaseNavigationResources
+> Task :app:mergeLibDexRelease
+> Task :app:processReleaseMainManifest
+> Task :app:processReleaseManifest
+> Task :app:packageReleaseResources
+> Task :app:processReleaseManifestForPackage
+> Task :app:mergeReleaseResources
+> Task :app:parseReleaseLocalResources
+> Task :app:mergeExtDexRelease
+> Task :app:generateReleaseRFile
+> Task :app:compileReleaseKotlin NO-SOURCE
+> Task :app:processReleaseJavaRes NO-SOURCE
+> Task :app:generateReleaseGlobalSynthetics
+> Task :app:mergeReleaseJavaResource
+> Task :app:processReleaseResources
+> Task :app:mergeReleaseJniLibFolders
+
+> Task :app:compileReleaseJavaWithJavac
+注: 某些输入文件使用或覆盖了已过时的 API。
+注: 有关详细信息, 请使用 -Xlint:deprecation 重新编译。
+
+> Task :app:dexBuilderRelease
+> Task :app:mergeProjectDexRelease
+> Task :app:mergeReleaseNativeLibs
+> Task :app:stripReleaseDebugSymbols
+> Task :app:mergeReleaseAssets
+> Task :app:compressReleaseAssets
+> Task :app:packageRelease
+> Task :app:assembleRelease
+> Task :app:createReleaseApkListingFileRedirect
+
+[Incubating] Problems report is available at: file:///Users/azuma/blender-android/src/build_android/gradle/build/reports/problems/problems-report.html
+
+BUILD SUCCESSFUL in 27s
+35 actionable tasks: 35 executed
+Configuration cache entry stored.

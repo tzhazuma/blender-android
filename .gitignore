@@ -1,0 +1,12 @@
+# Cloned Blender source tree plus the official prebuilt dependency submodule
+# (lib/android_arm64 + lib/macos_arm64). ~16 GB, fully reproducible from
+# projects.blender.org/blender/blender (branch `android`) and the submodules;
+# the build recipe is in STATUS.md.
+src/
+
+# Build outputs
+build_android/
+*.o
+*.so
+*.a
+*.apk

@@ -1,0 +1,28 @@
+ninja: Entering directory `build_android'
+[0/4088] Performing build step for 'host_tools'
+[0/1] Re-running CMake...
+-- Detected OS X 27.0 and Xcode 27.0 at /Applications/Xcode.app/Contents/Developer
+-- SDKs Directory: /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs
+-- Detected OSX_SYSROOT: /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk
+-- Found OpenPGL: /Users/azuma/blender-android/src/blender/lib/macos_arm64/openpgl/lib/libopenpgl.a
+-- Found required Ceres dependency: absl version 20250814 in /Users/azuma/blender-android/src/blender/lib/macos_arm64/abseil/lib/cmake/absl
+-- Found required Ceres dependency: Eigen version 5.0.1 in /Users/azuma/blender-android/src/blender/lib/macos_arm64/eigen/share/eigen3/cmake
+-- Found Ceres version: 2.3.0 installed in: /Users/azuma/blender-android/src/blender/lib/macos_arm64/ceres with components: [EigenSparse, SparseLinearAlgebraLibrary, LAPACK, AccelerateSparse, SchurSpecializations]
+-- Using NINJA_POOL_JOBS:
+--   NINJA_MAX_NUM_PARALLEL_LINK_JOBS: max concurrent linking jobs (computed): 1
+--   NINJA_MAX_NUM_PARALLEL_COMPILE_HEAVY_JOBS: max concurrent heavy compile jobs (computed): 9
+--   NINJA_MAX_NUM_PARALLEL_COMPILE_JOBS: max concurrent regular compile jobs (computed): 10
+-- Found Metal: /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk/System/Library/Frameworks/Metal.framework
+-- Could NOT find OptiX (missing: OPTIX_INCLUDE_DIR) (Required is at least version "8.0.0")
+-- OptiX not found, disabling WITH_CYCLES_DEVICE_OPTIX
+-- Configuring done (5.3s)
+-- Generating done (3.4s)
+-- Build files have been written to: /Users/azuma/blender-android/src/build_android/host_tools
+ninja: no work to do.
+[1/4088] Generating buildinfo.h_fake, buildinfo.h
+[3/7] No install step for 'host_tools'
+[4/7] Completed 'host_tools'
+[5/7] Building C object source/creator/CMakeFiles/blender.dir/buildinfo.c.o
+[6/7] Building CXX object source/creator/CMakeFiles/blender.dir/creator_android_libcxx_compat.cc.o
+[7/7] Linking CXX shared library lib/libblender.so
+Run: "ninja install" to copy runtime files and scripts to: /Users/azuma/blender-android/src/build_android/bin/5.3

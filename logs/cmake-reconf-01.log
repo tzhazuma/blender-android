@@ -1,0 +1,22 @@
+-- Using Android NDK: /Users/azuma/Library/Android/sdk/ndk/28.2.13676358
+-- Using Android ABI: arm64-v8a
+-- WITH_GHOST_SDL is enabled but incompatible, setting WITH_XR_OPENXR=OFF
+-- Found required Ceres dependency: absl version 20250814 in /Users/azuma/blender-android/src/blender/lib/android_arm64/abseil/lib/cmake/absl
+-- Found required Ceres dependency: Eigen version 5.0.1 in /Users/azuma/blender-android/src/blender/lib/android_arm64/eigen/share/eigen3/cmake
+-- Found Ceres version: 2.3.0 installed in: /Users/azuma/blender-android/src/blender/lib/android_arm64/ceres with components: [EigenSparse, SparseLinearAlgebraLibrary, SchurSpecializations]
+-- Using NINJA_POOL_JOBS:
+--   NINJA_MAX_NUM_PARALLEL_LINK_JOBS: max concurrent linking jobs (computed): 1
+--   NINJA_MAX_NUM_PARALLEL_COMPILE_HEAVY_JOBS: max concurrent heavy compile jobs (computed): 9
+--   NINJA_MAX_NUM_PARALLEL_COMPILE_JOBS: max concurrent regular compile jobs (computed): 10
+-- Could NOT find OptiX (missing: OPTIX_INCLUDE_DIR) (Required is at least version "8.0.0")
+-- OptiX not found, disabling WITH_CYCLES_DEVICE_OPTIX
+CMake Warning at build_files/cmake/platform/platform_android_gradle.cmake:153 (message):
+  ADB executable not found.  android_* APK upload/management targets will not
+  work.
+Call Stack (most recent call first):
+  CMakeLists.txt:2615 (include)
+
+
+-- Configuring done (2.7s)
+-- Generating done (3.0s)
+-- Build files have been written to: /Users/azuma/blender-android/src/build_android
