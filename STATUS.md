@@ -816,3 +816,54 @@ bool android_saf_publish(const char *path);
 渲染输出都还没接到它上面。然后是重建 Blender（13 GB 树，1–2 小时）。
 
 这一轮交付的是「可以接线的原生桥」，不是「能用的文件对话框」。
+
+---
+
+## 第 65 轮：SAF 头文件与非 Android 桩
+
+### 为什么加这两样
+
+原生桥写好了，但接线时会遇到一个麻烦：`file_select_exec` 在
+`source/blender/editors/space_file/` 里，那是**跨平台共享代码**。如果直接调用
+只在 Android 编译的函数，桌面构建会链接失败。
+
+两个选择：
+- 在调用点写 `#ifdef __ANDROID__`
+- 给桌面提供一个桩，让调用点不需要条件编译
+
+**选了后者**，理由：`file_select_exec` 本来就是很绕的函数，再插进条件编译会让
+它更难读；而且「Android 才有的能力在桌面返回空」本来就是正确语义，不需要掩饰。
+
+### 三个文件的分工
+
+| 文件 | 内容 | 编译条件 |
+|---|---|---|
+| `creator_android_saf.hh` | 三个函数声明 + 接线位置说明 | 总是 |
+| `creator_android_saf.cc` | JNI 实现（261 行） | `#ifdef __ANDROID__` |
+| `creator_android_saf_stub.cc` | 返回空/false 的桩 | `#ifndef __ANDROID__` |
+
+头文件里还写清了接线计划：拦截 `file_select_exec`
+（`file_ops.cc:576`），因为打开/导入/导出/渲染输出**都走这同一个操作符家族**，
+一个钩子覆盖四个场景。
+
+### 现在接线的成本
+
+在 `file_select_exec` 里加大约 5 行：
+
+```cpp
+#ifdef __ANDROID__
+  auto picked = blender::android_saf_pick_open();
+  if (!picked.empty()) { /* 用 picked[0] 作为选中文件 */ }
+#endif
+```
+
+或者用桩的话连 `#ifdef` 都不用。
+
+### 诚实说明
+
+**这一轮没有让「文件打开」变得能用。** 交付的是：
+- 三个函数（Java 侧 6 个方法 + 原生 3 个函数，契约对齐）
+- 桌面桩（保证跨平台构建不断）
+- 头文件里写死的接线位置
+
+剩下的接线和重建（13 GB、1–2 小时）是独立的一轮。
