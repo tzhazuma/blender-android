@@ -867,3 +867,61 @@ bool android_saf_publish(const char *path);
 - 头文件里写死的接线位置
 
 剩下的接线和重建（13 GB、1–2 小时）是独立的一轮。
+
+---
+
+## 第 66 轮：两个 SAF 补丁之前是坏的，已修正并验证可应用
+
+### 发现
+
+想验证补丁能不能应用到干净克隆，用 `git apply --check` 一试，两个 SAF 补丁**都失败**：
+
+```
+blender-android-saf-java.patch    error: No valid patches in input
+blender-android-saf-native.patch  error: corrupt patch
+```
+
+原因：
+
+1. **Java 补丁**是用 `diff -u /tmp/BlenderActivity.java.bak <当前文件>` 生成的 ——
+   两边都是**绝对路径**，没有 `a/` `b/` 前缀，git 认不出来。
+   而且 `/tmp` 里那个备份早就没了，所以第一次重生成得到 0 行。
+
+2. **原生补丁**是我手工拼的 —— 文件部分用 `diff -u /dev/null` 是对的，但
+   `CMakeLists.txt` 那段 hunk 是我**手写的**，行数 `@@ -343,6 +343,8 @@`
+   和实际内容对不上，所以 git 判定 corrupt。
+
+### 修法
+
+标准的做法是造两棵树然后 `diff -ruN a b`：
+
+```bash
+mkdir -p a/<相对路径> b/<相对路径>
+# a = 原始，b = 修改后
+diff -ruN a b > patch
+```
+
+- **原生补丁**：`a/` 里放去掉两行 SAF 的 CMakeLists，`b/` 里放当前版本；
+  三个新文件只在 `b/` 里 → `diff -N` 自动生成「新增文件」补丁
+- **Java 补丁**：`/tmp` 的备份没了，所以从**当前文件反向重建**原始版 ——
+  把 SAF 注释块到类末尾之间整段切掉，再把加的 import 还原（464 行 → 218 行，
+  和编辑前的 216 行基本吻合，多出的 2 行是还原时留下的空行）
+
+### 验证
+
+搭一个假的仓库（只放原始文件），然后 `git apply --check`：
+
+```
+blender-android-saf-java.patch      ✅ 可应用（265 行）
+blender-android-saf-native.patch    ✅ 可应用（372 行）
+```
+
+### 教训
+
+**「补丁文件存在」和「补丁能应用」是两件事，而前者很容易被当成后者。**
+
+我前几轮一直在往 `patches/` 里写文件、`wc -l` 看着行数正常、git 也提交了，
+但从没验证过 `git apply` 能不能成功。真到要用的时候才发现两个都是废的。
+
+**验证必须是「用它的方式去用它」** —— 补丁的用途是被 apply，那就得跑 `git apply --check`，
+而不是数行数。

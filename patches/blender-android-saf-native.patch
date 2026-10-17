@@ -1,5 +1,18 @@
---- a/source/creator/creator_android_saf.cc	2026-10-17 21:54:34
-+++ b/source/creator/creator_android_saf.cc	2026-10-17 21:54:17
+diff -ruN a/source/creator/CMakeLists.txt b/source/creator/CMakeLists.txt
+--- a/source/creator/CMakeLists.txt	2026-10-17 21:55:24
++++ b/source/creator/CMakeLists.txt	2026-10-17 21:55:24
+@@ -343,6 +343,8 @@
+ elseif(ANDROID)
+   list(APPEND SRC
+     creator_android.cc
++  creator_android_saf.cc
++  creator_android_saf_stub.cc
+   )
+   list(APPEND LIB
+     bf::dependencies::optional::sdl
+diff -ruN a/source/creator/creator_android_saf.cc b/source/creator/creator_android_saf.cc
+--- a/source/creator/creator_android_saf.cc	1970-01-01 08:00:00
++++ b/source/creator/creator_android_saf.cc	2026-10-17 21:55:24
 @@ -0,0 +1,263 @@
 +/* SPDX-FileCopyrightText: 2026 Blender Authors
 + *
@@ -264,8 +277,9 @@
 +}  // namespace blender
 +
 +#endif /* __ANDROID__ */
---- a/source/creator/creator_android_saf.hh	2026-10-17 21:54:34
-+++ b/source/creator/creator_android_saf.hh	2026-10-17 21:54:17
+diff -ruN a/source/creator/creator_android_saf.hh b/source/creator/creator_android_saf.hh
+--- a/source/creator/creator_android_saf.hh	1970-01-01 08:00:00
++++ b/source/creator/creator_android_saf.hh	2026-10-17 21:55:24
 @@ -0,0 +1,49 @@
 +/* SPDX-FileCopyrightText: 2026 Blender Authors
 + *
@@ -316,8 +330,9 @@
 +bool android_saf_publish(const char *path);
 +
 +}  // namespace blender
---- a/source/creator/creator_android_saf_stub.cc	2026-10-17 21:54:34
-+++ b/source/creator/creator_android_saf_stub.cc	2026-10-17 21:54:17
+diff -ruN a/source/creator/creator_android_saf_stub.cc b/source/creator/creator_android_saf_stub.cc
+--- a/source/creator/creator_android_saf_stub.cc	1970-01-01 08:00:00
++++ b/source/creator/creator_android_saf_stub.cc	2026-10-17 21:55:24
 @@ -0,0 +1,36 @@
 +/* SPDX-FileCopyrightText: 2026 Blender Authors
 + *
@@ -355,11 +370,3 @@
 +}  // namespace blender
 +
 +#endif /* !__ANDROID__ */
---- a/source/creator/CMakeLists.txt
-+++ b/source/creator/CMakeLists.txt
-@@ -343,6 +343,8 @@
-     creator_args.cc
-     creator_android.cc
-+  creator_android_saf.cc
-+  creator_android_saf_stub.cc
-     creator_android_libcxx_compat.cc

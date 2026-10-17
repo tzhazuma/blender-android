@@ -1,5 +1,6 @@
---- /tmp/BlenderActivity.java.bak	2026-10-17 21:41:42
-+++ release/android/app/src/main/java/org/blender/blender/BlenderActivity.java	2026-10-17 21:41:42
+diff -ruN a/source/blender/release/android/app/src/main/java/org/blender/blender/BlenderActivity.java b/source/blender/release/android/app/src/main/java/org/blender/blender/BlenderActivity.java
+--- a/source/blender/release/android/app/src/main/java/org/blender/blender/BlenderActivity.java	2026-10-17 21:55:35
++++ b/source/blender/release/android/app/src/main/java/org/blender/blender/BlenderActivity.java	2026-10-17 21:55:35
 @@ -3,7 +3,9 @@
  import android.content.res.AssetManager;
  import android.content.Intent;
@@ -151,7 +152,7 @@
 +                safSaveDone = true;
 +            }
 +        }
-     }
++    }
 +
 +    /**
 +     * Copy whatever the open picker returned into filesDir/incoming and record the real paths.
@@ -260,5 +261,5 @@
 +            name = "imported";
 +        }
 +        return name.replace('/', '_');
-+    }
+     }
  }
