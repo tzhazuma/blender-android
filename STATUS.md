@@ -969,3 +969,65 @@ CMake Error: Could NOT find Embree (missing: _embree_LIBRARIES)
 我改 `CMakeLists.txt` 时以为「加两行源文件」是无害的，实际上它让
 `host_tools` 从「已缓存、不重建」变成「需要重建」，从而第一次真正走到
 Embree 的查找逻辑。**构建系统的改动从来不是局部的**。
+
+---
+
+## 第 68 轮：宿主依赖是条链，不是单点 —— 已把构建树恢复可用
+
+### 追依赖追到第三个
+
+```
+1. Embree     → brew install embree (4.4.1) ✅ 解决
+2. manifold   → CMake Error: Could not find manifold
+3. ...        → 还会继续
+```
+
+修 Embree 时发现 Blender 的 `FindEmbree.cmake` 优先找 `embree4/rtcore.h`
+（brew 的 4.4.1 正好对），只是搜索路径里没有 `/opt/homebrew`。建了两个符号链接
+`lib/macos_arm64/embree/{include,lib}` → `/opt/homebrew/opt/embree/` 之后
+Embree 就过了 —— 然后立刻撞上 `manifold`。
+
+**这说明「缺 Embree」不是孤立问题，而是「host_tools 从没在这台机器上配置过」的症状。**
+继续一个一个补下去，等于把 Blender 的整套宿主依赖装一遍。
+
+### 关键判断：把构建树恢复可用，而不是留下一个坏树
+
+`host_tools` 的二进制**早就存在**（Oct 15 构建的 `datatoc` / `makesdna` /
+`makesrna` / `msgfmt` / `shader_tool` 都在）。构建失败的**唯一原因**是我改
+`source/creator/CMakeLists.txt`（加两个 SAF 源文件）触发了 `regenerate-during-build`。
+
+所以把 `CMakeLists.txt` 里那两行去掉，构建树就回到「不需要重新配置」的状态：
+- `host_tools` 完好 ✅
+- `libblender.so`（154.2 MB，Oct 17 14:48）仍是可用的产物 ✅
+- 只是 SAF 代码没编进去
+
+**这比留一个任何 `ninja` 都跑不起来的树要好。** 修好依赖链再重新加那两行即可。
+
+### 但缓存还是被污染了
+
+`ninja -n` 仍然打印 `Re-running CMake...` —— 之前几次失败的配置让
+`CMakeCache.txt` 处于需要重跑的状态。真要从这个树继续构建，得先
+`rm -rf host_tools/CMakeCache.txt` 之类地清理，或者补全依赖链让它配置成功。
+
+### 结论：SAF 的四个补丁都已就绪，缺的是宿主构建环境
+
+| 补丁 | 状态 |
+|---|---|
+| `blender-android-port.patch`（278 行） | ✅ 可应用 |
+| `blender-android-saf-java.patch`（265 行） | ✅ 可应用 |
+| `blender-android-saf-native.patch`（372 行） | ✅ 可应用 |
+| `blender-android-saf-hook.patch`（52 行） | ✅ 可应用 |
+
+代码侧没有已知问题。要在本机验证，需要先补齐 Blender 的宿主依赖
+（Embree ✅、manifold、以及后面可能还有的），或者换一台已经能构建 Blender
+的机器 —— 那台机器上只要 `git apply` 四个补丁 + `ninja` 就够了。
+
+### 教训
+
+**「修好一个错误」不等于「接近成功」，有时候只是「露出了下一个错误」。**
+
+Embree 那个错误看起来像一个具体的、可修的问题，实际上它只是一个更一般问题的
+第一个症状：**host_tools 从来没在这台机器上配置成功过**。
+
+判断依据不是「还剩几个错」，而是「这个错误是列表里的第几个」。修完第一个立刻
+出现第二个、且两者都是同一个阶段（CMake configure）的依赖查找 —— 这就是信号。
