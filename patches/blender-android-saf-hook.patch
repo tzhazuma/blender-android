@@ -1,0 +1,52 @@
+diff -ruN a/source/blender/editors/space_file/file_ops.cc b/source/blender/editors/space_file/file_ops.cc
+--- a/source/blender/editors/space_file/file_ops.cc	2026-10-17 21:57:10
++++ b/source/blender/editors/space_file/file_ops.cc	2026-10-17 21:57:10
+@@ -15,6 +15,12 @@
+ #include "BLI_string_utf8.hh"
+ #include "BLI_utildefines.hh"
+ 
++#ifdef __ANDROID__
++#  include "creator_android_saf.hh"
++#  include <string>
++#  include <vector>
++#endif
++
+ #include "BKE_appdir.hh"
+ #include "BKE_blendfile.hh"
+ #include "BKE_context.hh"
+@@ -513,6 +519,35 @@
+   if (sfile->files == nullptr || sfile->layout == nullptr) {
+     return OPERATOR_CANCELLED;
+   }
++
++#ifdef __ANDROID__
++  /* android-port: Android hands out content:// URIs, which nothing in Blender can open. The SAF
++   * bridge copies a picked document into the app's private storage and returns a real path, so
++   * navigating the browser there lets every downstream consumer keep working on an ordinary file.
++   *
++   * Only the opening gesture is diverted (a double-click / Return); plain single clicks still
++   * select, so browsing itself is unchanged. */
++  if (do_diropen) {
++    std::vector<std::string> picked = blender::android_saf_pick_open();
++    if (!picked.empty()) {
++      char dir[FILE_MAX];
++      BLI_path_split_dir_part(picked[0].c_str(), dir, sizeof(dir));
++      filelist_setdir(sfile->files, dir);
++      const int count = filelist_files_ensure(sfile->files);
++      for (int i = 0; i < count; i++) {
++        const char *name = filelist_entry_name_get(sfile->files, i);
++        if (name != nullptr && BLI_path_basename(picked[0].c_str()) != nullptr &&
++            STREQ(name, BLI_path_basename(picked[0].c_str())))
++        {
++          filelist_entry_select_index_set(
++              sfile->files, i, FILE_SEL_ADD, FILE_SEL_SELECTED, CHECK_ALL);
++          break;
++        }
++      }
++      return OPERATOR_FINISHED;
++    }
++  }
++#endif
+ 
+   WM_operator_properties_border_to_rcti(op, &rect);
+ 

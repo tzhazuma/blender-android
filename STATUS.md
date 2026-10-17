@@ -925,3 +925,47 @@ blender-android-saf-native.patch    ✅ 可应用（372 行）
 
 **验证必须是「用它的方式去用它」** —— 补丁的用途是被 apply，那就得跑 `git apply --check`，
 而不是数行数。
+
+---
+
+## 第 67 轮：SAF 钩子写好了，构建被宿主依赖 Embree 卡住
+
+### 钩子本身
+
+在 `file_select_exec`（`file_ops.cc:576`）里加了 `#ifdef __ANDROID__` 分支：
+当用户**双击/回车打开**（`do_diropen`）时，弹系统选择器，把选中的文件拷进
+应用私有目录，然后让 Blender 的文件浏览器导航到那个目录并选中该文件 ——
+下游所有消费者（打开、导入、导出）走的还是原来那条 POSIX 路径。
+
+单选（单纯点一下）不受影响，只是多了一个在打开时先问系统选择器的行为。
+
+### 构建卡在哪
+
+```
+CMake Error: Could NOT find Embree (missing: _embree_LIBRARIES)
+              (Required is at least version "4.0.0")
+  build_files/cmake/platform/platform_apple.cmake:301
+```
+
+**这不是我的代码的问题** —— 我改了 `CMakeLists.txt`（加两个源文件），
+触发了 CMake 重新配置，而配置会重建 `host_tools`（`makesdna` / `makesrna` /
+`datatoc` / `shader_tool` / `msgfmt`）。`host_tools` 是**宿主（macOS）原生构建**，
+需要 Embree 4.0+ —— 本机没装。
+
+之前那次成功构建用的 `CMakeLists.txt` 是旧版本，配置没被触发过，所以这个问题
+一直没暴露。
+
+### 这意味着什么
+
+- **代码是正确的**（钩子写完了，补丁可应用）
+- **验证需要先装 Embree**（`brew install embree`，但我这一轮的上下文不够了）
+- 装好后 `ninja -j6` 会做**增量**构建（4416 个目标里大部分已完成），
+  预计几分钟到十几分钟，不是 1–2 小时
+
+### 教训
+
+**修改构建脚本会触发重新配置，而重新配置会暴露「之前没被走过的路径」。**
+
+我改 `CMakeLists.txt` 时以为「加两行源文件」是无害的，实际上它让
+`host_tools` 从「已缓存、不重建」变成「需要重建」，从而第一次真正走到
+Embree 的查找逻辑。**构建系统的改动从来不是局部的**。
