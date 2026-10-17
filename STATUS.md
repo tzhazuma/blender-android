@@ -728,3 +728,33 @@ Blender 用 **SDL3**（`BlenderActivity extends SDLActivity`），不是 GameAct
 ### 补丁
 
 `patches/blender-android-saf-java.patch`
+
+### 补丁生成方式的修正
+
+第一次用 `cd src/blender && git diff <file>` 生成补丁，结果**0 行** —— 因为
+`~/blender-android/.gitignore` 第 5 行是 `src/`，整个上游克隆树都不被跟踪，
+所以 `git diff` 看不到任何改动。
+
+改用 `diff -u <备份> <当前>` 生成，得到 264 行。备份是编辑前的
+`/tmp/BlenderActivity.java.bak`。
+
+**教训**：Blender 这边的约定和 ArtCraft 不同 ——
+- ArtCraft：`src/` 是克隆（gitignore），`ports/` 是源真相
+- Blender：`src/` 是克隆（gitignore），`patches/` 是源真相
+
+在 `src/` 里跑 `git diff` 永远是空的。应该先备份、改、再 `diff -u` 出补丁。
+
+### Java 语法检查
+
+用 `javac -proc:only`（不是 `-fsyntax-only`，那是 clang 的参数）：
+
+```
+错误: 程序包org.libsdl.app不存在
+错误: 找不到符号 SDLActivity
+```
+
+只有这两个 —— 都是因为 SDL 的 Java 类在同一个树里但没进 classpath。
+**新增的 240 行 SAF 代码本身零语法错误。**
+
+（这比 `-fsyntax-only` 有用得多：那个参数 javac 直接报「无效的标记」，
+等于什么都没检查，但输出看起来像「没输出=通过」，很容易误判。）
