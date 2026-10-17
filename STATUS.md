@@ -675,3 +675,56 @@ SDL 不会调用 `SDL_main`，**窗口模式下的 `--python` 脚本根本不会
 - **⇒ 必须有人在真机上双指上滑解锁，解锁后不要关屏。**
 
 
+
+---
+
+## 第 60 轮：Blender 的 SAF —— Java 侧完成
+
+### 现状
+
+Blender 之前**完全没有** SAF：补丁只改了构建系统、单窗口回退（`screen_edit.cc`）、
+文件浏览器书签（`fsmenu_system_unix.cc`）、默认目录（`appdir.cc`）。
+`grep ACTION_OPEN_DOCUMENT` 在 Blender 源码里零命中。
+
+Blender 用 **SDL3**（`BlenderActivity extends SDLActivity`），不是 GameActivity。
+
+### 这轮做了什么：`BlenderActivity.java` 加 SAF 桥（216 → 464 行）
+
+六个公开方法，契约与 ArtCraft 的一致：
+
+| 方法 | 作用 |
+|---|---|
+| `safPickOpen()` | `ACTION_OPEN_DOCUMENT` + `EXTRA_ALLOW_MULTIPLE`；每个文档拷到
+`filesDir/incoming/`，真实路径逐行写入 `filesDir/saf-manifest.txt` |
+| `safIsDone()` | 原生侧轮询：导入完成？ |
+| `safPickSave(String)` | `ACTION_CREATE_DOCUMENT`；URI 留在 Java 侧 |
+| `safSaveDone()` | 轮询：保存选择器完成？ |
+| `safHasSaveUri()` | 用户选了目标？ |
+| `safPublish(String)` | 把 Blender 写好的文件流式拷到选中的 URI |
+
+设计要点（与 ArtCraft 相同，且都有理由）：
+
+- **结果走文件系统**（`saf-manifest.txt`），不走 JNI 数组 —— 选中 100 个文件也不会
+  撑爆 JNI 局部引用表，而且 JNI 表面只有几个方法
+- **取消时写空 manifest**，避免「取消」反而重导上次的选择
+- **重名加 ` (2)` 后缀**，不覆盖 —— 从不同文件夹选两个同名 `.blend` 是正常操作
+- **`takePersistableUriPermission` 用 try/catch 包住** —— 不支持持久授权的 provider
+  退回一次性授权，而不是抛异常
+- **缓冲区 256 KB**（比 ArtCraft 的 64 KB 大）：Blender 的 `.blend` 动辄几百 MB，
+  小缓冲区会让拷贝变慢
+
+### 还差什么
+
+**原生侧**（`creator_android_saf.cc`）还没写。需要：
+
+1. JNI 调用上面六个方法（`ndk_context` 给的是 Application，没有
+   `startActivityForResult`，所以要用 SDL 的 activity 指针）
+2. 挂到 `fsmenu_system_unix.cc` 里加一个「Android 文件」入口
+3. 让 `wm_file_open` / 导入 / 导出 / 渲染输出在 Android 上走这条路径
+
+然后要**重建 Blender**（`src/build_android` 13 GB，全量重建约 1–2 小时）。
+这是独立的一轮工作，不适合和 Java 侧挤在一起。
+
+### 补丁
+
+`patches/blender-android-saf-java.patch`
