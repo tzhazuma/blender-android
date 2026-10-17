@@ -532,4 +532,146 @@ export JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home 
 5. `CMakeLists.txt`（新增 `PYTHON_EXECUTABLE_TARGET`）
 另有 1 处**非源码**修补：把 Vulkan 1.4.341 头文件拷进 `lib/android_arm64/vulkan/include/`。
 
+---
+
+## 第 4 阶段：「打开文件 / 保存文件」不可用 —— 定性、根因与修复（2026-10-17）
+
+### 4.0 症状定性（**不是**权限、不是路径、不是 SAF）
+
+任务描述里的"打开文件 / 保存文件不可用"，**具体症状是：点 `File → Open…`（或 `Save As…`）之后
+界面上什么都不发生**——文件浏览器窗口根本创建不出来。
+
+同一个根因还连坐了（都没人注意到）：
+- `Edit → Preferences`（报 `Failed to open window!`）
+- Project Setup（`SCREEN_OT_project_setup_show`）
+
+**不是**下面这些（都已实测排除，见 4.2）。
+
+### 4.1 根因链（源码级 + 二进制级，逐环可复现）
+
+| # | 位置 | 事实 |
+|---|---|---|
+| 1 | `source/blender/windowmanager/intern/wm_event_system.cc:2884` | 文件浏览器走 `ED_screen_temp_space_open(C, "Blender File View", SPACE_FILE, U.filebrowser_display_type, true)`；返回 `nullptr` 时只 `BKE_report(..., "Failed to open file browser!")` 然后 `WM_HANDLER_BREAK` |
+| 2 | `source/blender/makesdna/DNA_userdef_types.h:1293` | `eUserpref_TempSpaceDisplayType filebrowser_display_type = USER_TEMP_SPACE_DISPLAY_WINDOW;` —— **默认是"开新窗口"** |
+| 3 | `source/blender/editors/screen/screen_edit.cc:1896` | `USER_TEMP_SPACE_DISPLAY_WINDOW` → `WM_window_open_temp()` → `WM_window_open()` → **新建一个 GHOST 窗口** |
+| 4 | `intern/ghost/intern/GHOST_WindowSDL.cc:60` | 新窗口靠 `SDL_CreateWindow()` 创建 |
+| 5 | **SDL3 官方源码** `src/video/android/SDL_androidwindow.c` | ```c // Currently only one window \n SDL_Window *Android_Window = NULL; ... if (Android_Window) { result = SDL_SetError("Android only supports one window"); goto endfunction; } ``` |
+| 6 | 本机 `lib/android_arm64/sdl/lib/libSDL3.so` | `strings -a libSDL3.so \| grep -i "one window"` → **`Android only supports one window`**（就是我们打包进 APK 的那份 3.4.2，字符串确实在） |
+| 7 | `intern/ghost/intern/GHOST_WindowSDL.cc:56` | `sdl_win_ = SDL_CreateWindow(...)` 返回 `NULL` → `setDrawingContextType()` 也失败（`vkCreateAndroidSurfaceKHR` 拿不到 window）→ `valid_setup_=false` → `getValid()` false |
+| 8 | `intern/ghost/intern/GHOST_SystemSDL.cc` | `createWindow()` 里 `if (window->getValid()) {...} else { delete window; window = nullptr; }` |
+| 9 | `source/blender/windowmanager/intern/wm_window.cc`（`WM_window_open` 末尾） | ```c /* Very unlikely! but opening a new window can fail. */ wm_window_close(C, wm, win); CTX_wm_window_set(C, win_prev); return nullptr; ``` |
+| 10 | 回到 #1 | `ED_screen_temp_space_open()` 返回 `nullptr` → **只弹一条 report，窗口不出现** |
+
+> SDL3 的多窗口支持至今没做：官方 issue [libsdl-org/SDL#15328 "Android: Allow creation of multiple windows"](https://github.com/libsdl-org/SDL/issues/15328) 仍是 open。
+
+### 4.2 排除掉的可能（真机 `-b` 无头实测，**不依赖锁屏**）
+
+用 `BlenderActivity` 的 `--es args` 钩子跑 `--python <script>`（**必须带 `-b`**，见 4.5），
+脚本把结果写进 app 私有目录，再用 `run-as` 取回（vivo 会过滤第三方 logcat，只能靠文件）：
+
+```
+$ adb shell "am start -n org.blender.blender/.BlenderActivity --es args '-b --python /data/user/0/org.blender.blender/files/home/probe1.py'"
+$ adb shell run-as org.blender.blender cat /data/user/0/org.blender.blender/files/home/probe1.txt
+```
+
+- **共享存储可读可写**（manifest 里一个存储权限都没声明，但这台 vivo 就是放行）：
+  - `os.listdir('/storage/emulated/0')` → 36 项；`/storage/emulated/0/Download` → 25 项
+  - `os.listdir('/storage/emulated')` → `FileNotFoundError`（FUSE 挂载点本身列不出来，见 4.4）
+  - `/storage/emulated/0` 根目录**不可写**（`Operation not permitted`，scoped storage 正常行为）
+  - `/storage/emulated/0/Download`、`/Documents` 可写
+- **.blend 存取往返全部成功**：
+  | 路径 | 结果 |
+  |---|---|
+  | `files/home/roundtrip_home.blend` | save ✅ 95597 B / open ✅ |
+  | `/storage/emulated/0/Download/BlenderProbe/roundtrip_download.blend` | save ✅ 95599 B / open ✅（`adb shell ls` 也能看到，owner `u0_a0:media_rw`） |
+  | `/storage/emulated/0/Documents/BlenderProbe/roundtrip_documents.blend` | save ✅ / open ✅ |
+  | `/storage/emulated/0/roundtrip_root.blend` | ❌ `Operation not permitted`（根目录不可写，符合预期） |
+- `dumpsys package org.blender.blender`：`requested permissions` 只有 `INTERNET`；
+  appops `READ_EXTERNAL_STORAGE/WRITE_EXTERNAL_STORAGE/MANAGE_EXTERNAL_STORAGE` 全是 `ignore/default`
+  —— **权限不是这次的瓶颈**。
+
+### 4.3 修复（2 处，都带 `android-port` 注释）
+
+1. **`source/blender/editors/screen/screen_edit.cc`** —— `ED_screen_temp_space_open()`：
+   `USER_TEMP_SPACE_DISPLAY_WINDOW` 分支在 `WM_window_open_temp()` 失败后
+   `[[fallthrough]]` 到 `USER_TEMP_SPACE_DISPLAY_FULLSCREEN`，**退化成"在当前窗口里全屏打开临时空间"**。
+   这是平台无关的健壮化（桌面端只在极罕见的新窗口失败时才走到），一次修好
+   File Browser / Preferences / Project Setup。
+
+2. **`source/blender/editors/space_file/fsmenu_system_unix.cc`** —— Android 侧边栏书签：
+   跳过 XDG（Android 没有）+ 跳过 `/proc/mounts` 扫描（列出来一堆打不开的挂载点），
+   改成显式插入 `/storage/emulated/0`（Internal Storage）、`Download`、`Documents`、
+   `Pictures`、`DCIM`、`Movies`、`Music`（存在才插）。XDG 那几个函数用 `#ifndef __ANDROID__` 包起来避免 unused 警告。
+
+3. **`source/blender/blenkernel/intern/appdir.cc`** —— `BKE_appdir_folder_default()`：
+   Android 上 `$HOME` 是 app 私有目录（文件管理器看不到），改成优先返回
+   `/storage/emulated/0/Download` → `/Documents` → `/storage/emulated/0`（存在才用）。
+   这样文件浏览器**默认就落在用户能看见、而且可写**的地方，"另存为"开箱即用。
+
+### 4.4 附带发现（Android 文件系统事实，供以后参考）
+
+- `/proc/mounts` 里共享存储是 `/dev/fuse /storage/emulated`（**不是** `/storage/emulated/0`），
+  而 `open("/storage/emulated")` → `ENOENT`；只有 `/storage/emulated/0` 能列。
+  → 所以桌面版那套"扫 `/proc/mounts` 生成系统书签"在 Android 上只会产生一堆死链接。
+- `getpwuid()` 在 Android 返回 NULL（`BLI_filelist.cc:335`、`storage.cc:114` 都有 null 检查，不会崩）。
+- Blender 的 `cwd` 是 `/`，而 `listdir("/")` 是 `EACCES` —— 任何"退化成 `/`"的路径都会显示空目录。
+
+### 4.5 增量重编译（**重要**：`ninja` 图已坏，必须手工编译+链接）
+
+第 3.11 节说的 ninja 图损坏依然存在：现在 `ninja -n lib/libblender.so` 会报 **4088 步**
+（`host_tools` stamp 过期 → 重新生成 DNA → 全树重编）。**不要跑 ninja**，按下面手工做，
+单文件改动从改代码到出新 APK 只要 ~1 分钟：
+
+```bash
+cd ~/blender-android/src/build_android
+# 1) 取出精确命令（改哪个文件就取哪个 .o）
+ninja -t commands source/blender/editors/screen/CMakeFiles/bf_editor_screen.dir/screen_edit.cc.o | tail -1 > /tmp/cc.txt
+ninja -t commands lib/libbf_editor_screen.a | tail -1 > /tmp/ar.txt
+ninja -t commands lib/libblender.so | tail -1 > /tmp/link.txt
+# 2) 编译 + 更新静态库 + 重链
+bash -c "$(cat /tmp/cc.txt)"; bash -c "$(cat /tmp/ar.txt)"; bash -c "$(cat /tmp/link.txt)"
+# 3) 立刻 strip（带 debug_info 是 1.99GB！）
+~/Library/Android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-strip \
+  --strip-unneeded lib/libblender.so                      # 1.99GB → 161MB
+# 4) 打包（同 3.16 的 install + stage + assembleRelease）
+```
+⚠️ **gradle 增量打包会在 APK 里留下上一次 `libblender.so` 的 68MB 死数据**
+（`assembleRelease` 原地改写 zip 不截断）。**每次打包前先 `rm -f app/build/outputs/apk/release/app-release.apk`**，
+否则 APK 会从 307MB 虚胖到 375MB（内容仍然正确，纯浪费）。
+
+### 4.6 无头调试通道（**本阶段最有用的工具**，建议以后都留着用）
+
+`BlenderActivity` 会把 `--es args` 里的字符串按空白切分后交给 Blender，所以：
+
+```bash
+# 无头跑任意 python（锁屏也能跑！-b 不需要窗口）
+adb shell "am start -n org.blender.blender/.BlenderActivity --es args '-b --python /data/user/0/org.blender.blender/files/home/x.py'"
+# 把脚本写进 app 私有目录（app 读不了 /data/local/tmp，SELinux）
+adb shell "run-as org.blender.blender sh -c 'cat > /data/user/0/org.blender.blender/files/home/x.py'" < x.py
+# 取回结果
+adb shell run-as org.blender.blender cat /data/user/0/org.blender.blender/files/home/x.txt
+```
+⚠️ 参数是**空白切分、不支持引号**，路径里不能有空格。
+⚠️ `-b`（后台）必须加：**锁屏/息屏时 activity 没有 surface**（`mDrawState=NO_SURFACE`、`mViewVisibility=0x8`），
+SDL 不会调用 `SDL_main`，**窗口模式下的 `--python` 脚本根本不会执行**（踩过）。
+
+### 4.7 真机验证（**未完成 —— 阻塞在人类解锁**）
+
+验证计划（原 APK 还在机器上，先复现再装补丁）：
+1. 用**当前已安装的原始 APK**复现：`File → Open…` → 截图应显示"什么都没发生"（+ 状态栏 report）。
+2. `adb push` 补丁 APK 到 `/data/local/tmp/` → `pm install -r -t`（vivo 会弹安装确认，用 `uiautomator dump` 取 bounds 点掉，**每次都要重新 dump，坐标会变**，见 3.15）。
+3. 复验：`File → Open…` 应打开**全屏文件浏览器**；侧边栏 System 里应出现 `Internal Storage / Downloads / Documents / …`。
+4. 打开 `/storage/emulated/0/Download/my_scene.blend`（已预置，含一个 UV 球便于截图辨认），
+   再 `Save As` 到 `/storage/emulated/0/Documents/android_saved.blend`，用 `adb shell ls -la` 核对落盘。
+
+**阻塞原因（需要人类操作，adb 做不到）**：
+- 真机自 14:06 起**息屏 + 锁屏**（`mDreamingLockscreen=true`）。vivo 的解锁是**双指上滑**。
+- 已试过且**全部无效**：`wm dismiss-keyguard`、单指 `input swipe`（含从底边起/慢速/长距离）、
+  `keyevent WAKEUP/MENU`、`locksettings set-disabled true`（返回成功但 `get-disabled` 仍 false）、
+  `settings put secure lockscreen.disabled 1`、`am start HOME`、power 键循环、`cmd device_state`（不支持 2/3）。
+- 也试过绕过 `input` 直接 `sendevent /dev/input/event6`（`vivo_ts`，type-B MT，shell 在 `input` 组里）
+  合成双指手势：**`sendevent: /dev/input/event6: Permission denied`**（SELinux 拦 shell 写 input_device）。
+- 已设 `svc power stayon true` + `settings put system screen_off_timeout 2147483647`（vivo 会忽略，仍会睡）。
+- **⇒ 必须有人在真机上双指上滑解锁，解锁后不要关屏。**
+
 

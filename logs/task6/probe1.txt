@@ -1,0 +1,59 @@
+=== env ===
+HOME=/data/user/0/org.blender.blender/files/home
+TMPDIR=/data/user/0/org.blender.blender/cache
+PATH=/product/bin:/apex/com.android.runtime/bin:/apex/com.android.art/bin:/apex/com.android.virt/bin:/system_ext/bin:/system/bin:/system/xbin:/odm/bin:/vendor/bin:/vendor/xbin
+BLENDER_ANDROID_EXTRACT_DIR=/data/user/0/org.blender.blender/files/extract
+TMP=None
+USER=None
+EXTERNAL_STORAGE=/sdcard
+=== cwd/uid ===
+cwd=/
+uid=10432 euid=10432 gid=10432
+umask=63
+=== listdir ===
+listdir /                                                       ERR:PermissionError:[Errno 13] Permission denied: '/'
+listdir /sdcard                                                 OK n=36 first=['Android', 'Music', 'Movies', 'Pictures', '.系统文件，请勿删除', 'Recordings', 'i Music', 'tencent', 'Download', '互传', 'dcim', '.vivoBrowser']
+listdir /storage                                                ERR:PermissionError:[Errno 13] Permission denied: '/storage'
+listdir /storage/emulated                                       ERR:FileNotFoundError:[Errno 2] No such file or directory: '/storage/emulated'
+listdir /storage/emulated/0                                     OK n=36 first=['Android', 'Music', 'Movies', 'Pictures', '.系统文件，请勿删除', 'Recordings', 'i Music', 'tencent', 'Download', '互传', 'dcim', '.vivoBrowser']
+listdir /storage/emulated/0/Download                            OK n=25 first=['i Theme', 'EasyShare', 'vivo互传', 'Email', 'QQ', 'vivo办公套件', '互传', 'WeiXin', '.TempDragFile', 'netease', '1', 'Notes']
+listdir /storage/emulated/0/Documents                           OK n=13 first=['新建文件夹', '新建文件夹(1)', 'Gallery', '.Android_819ee91f8d8cc1bb', '.Android_f0fcd2bde58f4ae8', 'ringtone', 'JNotesLog', 'YunJiLog', 'Yunji', '.WpsPrinterPDF', 'tap_sandbox_backup', 'TTKN']
+listdir /storage/emulated/0/Android/data/org.blender.blender/files ERR:FileNotFoundError:[Errno 2] No such file or directory: '/storage/emulated/0/Android/data/org.blender.blender/files'
+listdir /storage/self/primary                                   OK n=36 first=['Android', 'Music', 'Movies', 'Pictures', '.系统文件，请勿删除', 'Recordings', 'i Music', 'tencent', 'Download', '互传', 'dcim', '.vivoBrowser']
+listdir /mnt                                                    OK n=19 first=['vdfs', 'saleinfo', 'cd-rom', 'vm', 'sdcard', 'pre_reboot_dexopt', 'runtime', 'appfuse', 'expand', 'pass_through', 'media_rw', 'obb']
+listdir /data                                                   ERR:PermissionError:[Errno 13] Permission denied: '/data'
+listdir /data/local/tmp                                         ERR:PermissionError:[Errno 13] Permission denied: '/data/local/tmp'
+listdir /data/user/0/org.blender.blender/files                  OK n=3 first=['extract', '.extract_stamp', 'home']
+listdir /data/user/0/org.blender.blender/files/home             OK n=3 first=['.cache', '.config', 'probe1.py']
+listdir /system                                                 OK n=24 first=['apex', 'app', 'art', 'bin', 'build.prop', 'custom', 'data', 'dyn', 'etc', 'fonts', 'framework', 'lib']
+listdir /proc/self/fd                                           OK n=139 first=['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11']
+=== stat / access ===
+access W /storage/emulated/0                           False
+stat   /storage/emulated/0                           os.stat_result(st_mode=17912, st_ino=3448, st_dev=134, st_nlink=40, st_uid=1023, st_gid=1023, st_size=3452, st_atime=1735776003, st_mtime=1792123312, st_ctime=1792123312)
+access W /storage/emulated/0/Download                  True
+stat   /storage/emulated/0/Download                  os.stat_result(st_mode=17912, st_ino=74436, st_dev=134, st_nlink=27, st_uid=10000, st_gid=1023, st_size=20480, st_atime=1745563530, st_mtime=1792183646, st_ctime=1792183646)
+access W /data/user/0/org.blender.blender/files/home   True
+stat   /data/user/0/org.blender.blender/files/home   os.stat_result(st_mode=16832, st_ino=4936815, st_dev=65087, st_nlink=4, st_uid=10432, st_gid=10432, st_size=3452, st_atime=1792095062, st_mtime=1792217429, st_ctime=1792217429)
+=== write tests ===
+write /data/user/0/org.blender.blender/files/home/write_test.bin OK
+write /storage/emulated/0/Download/blender_write_test.bin     OK
+write /storage/emulated/0/blender_write_test.bin              ERR PermissionError: [Errno 1] Operation not permitted: '/storage/emulated/0/blender_write_test.bin'
+write /sdcard/blender_write_test.bin                          ERR PermissionError: [Errno 1] Operation not permitted: '/sdcard/blender_write_test.bin'
+write /data/local/tmp/blender_write_test.bin                  ERR PermissionError: [Errno 13] Permission denied: '/data/local/tmp/blender_write_test.bin'
+=== blender ===
+bpy version=5.3.0 Alpha
+bpy.app.binary_path=/data/user/0/org.blender.blender/files/extract/blender
+bpy.app.tempdir=/data/user/0/org.blender.blender/cache/blender_bS9CWU/
+bpy.utils.resource_path('LOCAL')=/data/user/0/org.blender.blender/files/extract/5.3
+bpy.utils.resource_path('USER')=/data/user/0/org.blender.blender/files/home/.config/blender/5.3
+bpy.utils.resource_path('SYSTEM')=
+bpy.data.filepath=''
+bpy.path.abspath('//')=
+prefs.filepaths.file_preview_type=AUTO
+bpy section failed:
+Traceback (most recent call last):
+  File "/data/user/0/org.blender.blender/files/home/probe1.py", line 91, in <module>
+    p("prefs.filepaths.use_filter_file_extensions=%s" % fp.use_filter_file_extensions)
+                                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'PreferencesFilePaths' object has no attribute 'use_filter_file_extensions'
+

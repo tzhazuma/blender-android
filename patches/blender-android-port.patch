@@ -1,0 +1,278 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -2509,6 +2509,12 @@
+ 
+ set(HOST_LIBDIR ${LIBDIR})
+ 
++# The Python interpreter shipped with the portable install, i.e. the *target* one.
++# `PYTHON_EXECUTABLE` is overridden to the *host* interpreter below when cross-compiling
++# (build-time tools have to run on the host), so install rules that ship the interpreter
++# into the install tree must use this variable instead.
++set(PYTHON_EXECUTABLE_TARGET ${PYTHON_EXECUTABLE})
++
+ if(CMAKE_CROSSCOMPILING)
+   # When cross-compiling, certain tools (like Python) need to be accessed from
+   # the *host* pre-compiled libraries to then be executed.
+@@ -2565,6 +2571,14 @@
+   else()
+     file(GLOB PYTHON_EXECUTABLE "${HOST_LIBDIR}/python/bin/python3.*")
+   endif()
++
++  # Keep the target interpreter for the install rules, `PYTHON_EXECUTABLE` is the host
++  # one from here on.
++  file(GLOB _python_executable_target "${LIBDIR}/python/bin/python3.*")
++  if(_python_executable_target)
++    list(POP_BACK _python_executable_target PYTHON_EXECUTABLE_TARGET)
++  endif()
++  unset(_python_executable_target)
+ endif()
+ 
+ 
+--- a/source/creator/CMakeLists.txt
++++ b/source/creator/CMakeLists.txt
+@@ -149,6 +149,12 @@
+   creator_intern.h
+ )
+ 
++if(ANDROID)
++  # Link compatibility shim for the pre-compiled Android dependencies, which reference a
++  # libc++ symbol that the NDK's libc++ no longer exports. See the file's header comment.
++  list(APPEND SRC creator_android_libcxx_compat.cc)
++endif()
++
+ if(CMAKE_GENERATOR MATCHES "^Visual Studio.+")
+   # This helps visual studio find the debugger visualizers
+   list(APPEND SRC ${CMAKE_SOURCE_DIR}/tools/utils_ide/natvis/Blender.natvis)
+@@ -885,7 +891,7 @@
+   if(WITH_PYTHON AND WITH_PYTHON_INSTALL)
+     # Install executable
+     install(
+-      PROGRAMS ${PYTHON_EXECUTABLE}
++      PROGRAMS ${PYTHON_EXECUTABLE_TARGET}
+       DESTINATION ${TARGETDIR_VER}/python/bin
+     )
+ 
+@@ -1837,7 +1843,7 @@
+ 
+     # Install Python executable.
+     install(
+-      PROGRAMS ${PYTHON_EXECUTABLE}
++      PROGRAMS ${PYTHON_EXECUTABLE_TARGET}
+       DESTINATION ${TARGETDIR_VER}/python/bin
+     )
+ 
+--- a/source/creator/symbols_unix.map
++++ b/source/creator/symbols_unix.map
+@@ -10,6 +10,12 @@
+   _init*;
+   /* Android SDL main entry point looked up by SDLActivity nativeRunMain() (which uses dlsym() internally). */
+   SDL_main*;
++  /* Android: the pre-compiled dependencies (libtbb.so, libOpenImageIO.so, MaterialX,
++   * OpenColorIO, ...) were built against a libc++ that exported this symbol, which the
++   * libc++ shipped with NDK r28 no longer provides. `libblender.so` supplies it (see
++   * creator_android_libcxx_compat.cc) and is the root of the library load group, so it has
++   * to be exported for those libraries to relocate. Mangled: std::__ndk1::__hash_memory. */
++  _ZNSt6__ndk113__hash_memoryEPKvm;
+   /* Needed for Python modules to work. */
+   Py*;
+   _Py*;
+--- a/source/blender/editors/sculpt_paint/mesh/paint_image_3d.cc
++++ b/source/blender/editors/sculpt_paint/mesh/paint_image_3d.cc
+@@ -438,9 +438,12 @@
+ 
+   for (int tile_x = tile_x_start; tile_x <= tile_x_end; tile_x++) {
+     const int tile_index = tile_y * undo_tiles_x + tile_x;
+-    std::atomic_ref<uint32_t> pushed(tile_pushed[tile_index]);
++    /* NOTE(android-port): `std::atomic_ref` is not provided by the Android NDK's
++     * libc++ (r28, LLVM 19), so the compiler builtins are used instead. They are
++     * semantically identical here. */
++    uint32_t &pushed = tile_pushed[tile_index];
+     /* This atomic load is free on x86_64, and cheap on arm64. */
+-    if (pushed.load(std::memory_order_acquire)) {
++    if (__atomic_load_n(&pushed, __ATOMIC_ACQUIRE)) {
+       continue;
+     }
+     ImageUser tile_user = image_data.image_user_get();
+@@ -448,7 +451,7 @@
+     PaintTileMap *undo_tiles = ED_image_paint_tile_map_get();
+     ED_image_paint_tile_push(
+         undo_tiles, image_data.image, &image_buffer, &tile_user, tile_x, tile_y, nullptr, nullptr);
+-    pushed.store(1, std::memory_order_release);
++    __atomic_store_n(&pushed, 1, __ATOMIC_RELEASE);
+   }
+ }
+ 
+--- a/source/blender/editors/screen/screen_edit.cc
++++ b/source/blender/editors/screen/screen_edit.cc
+@@ -1897,7 +1897,14 @@
+       if (WM_window_open_temp(C, title, space_type, dialog)) {
+         return CTX_wm_area(C);
+       }
+-      break;
++      /* android-port: some platforms can never create a second window. Notably Android,
++       * where the SDL GHOST backend is limited to a single window (`SDL_CreateWindow`
++       * fails with "Android only supports one window"), which made every temporary space
++       * asking for its own window silently fail to open: the file browser
++       * (`File > Open`, `File > Save As`), Preferences and Project Setup.
++       * Fall back to a full-screen temporary space inside the current window, which works
++       * on every platform. */
++      [[fallthrough]];
+     case USER_TEMP_SPACE_DISPLAY_FULLSCREEN: {
+       bScreen *ctx_screen = CTX_wm_screen(C);
+ 
+--- a/source/blender/editors/space_file/fsmenu_system_unix.cc
++++ b/source/blender/editors/space_file/fsmenu_system_unix.cc
+@@ -49,6 +49,10 @@
+  * Generic Unix, Use XDG when available, otherwise fall back to the home directory.
+  * \{ */
+ 
++#ifndef __ANDROID__
++/* android-port: Android has no XDG user directories, `fsmenu_read_system` adds the shared
++ * storage locations directly instead. */
++
+ /**
+  * Look for `user-dirs.dirs`, where localized or custom user folders are defined,
+  * and store their paths in a GHash.
+@@ -145,6 +149,8 @@
+       fsmenu, FS_CATEGORY_SYSTEM_BOOKMARKS, xdg_path, default_path, icon, FS_INSERT_LAST);
+ }
+ 
++#endif /* !__ANDROID__ */
++
+ /** \} */
+ 
+ void fsmenu_read_system(FSMenu *fsmenu, int read_bookmarks)
+@@ -155,6 +161,40 @@
+     fsmenu_insert_entry(
+         fsmenu, FS_CATEGORY_SYSTEM_BOOKMARKS, home, N_("Home"), ICON_HOME, FS_INSERT_LAST);
+ 
++#ifdef __ANDROID__
++    /* android-port: Android has no XDG user directories, and the `$HOME` sub-directories
++     * that would be listed below are inside the app private data directory (invisible to
++     * the user). The emulated shared storage is what users expect to browse, and only
++     * `/storage/emulated/0` (and paths below it) can actually be listed: the FUSE mount
++     * points reported by `/proc/mounts` (`/storage/emulated`, `/mnt/user/0/emulated`, ...)
++     * fail with `ENOENT` when opened. Add the user facing locations explicitly. */
++    {
++      static const struct {
++        const char *path;
++        const char *name;
++        BIFIconID icon;
++      } android_shared_items[] = {
++          {"/storage/emulated/0", N_("Internal Storage"), ICON_DISK_DRIVE},
++          {"/storage/emulated/0/Download", N_("Downloads"), ICON_IMPORT},
++          {"/storage/emulated/0/Documents", N_("Documents"), ICON_DOCUMENTS},
++          {"/storage/emulated/0/Pictures", N_("Pictures"), ICON_FILE_IMAGE},
++          {"/storage/emulated/0/DCIM", N_("Camera"), ICON_FILE_IMAGE},
++          {"/storage/emulated/0/Movies", N_("Movies"), ICON_FILE_MOVIE},
++          {"/storage/emulated/0/Music", N_("Music"), ICON_FILE_SOUND},
++      };
++
++      for (int i = 0; i < ARRAY_SIZE(android_shared_items); i++) {
++        if (BLI_is_dir(android_shared_items[i].path)) {
++          fsmenu_insert_entry(fsmenu,
++                              FS_CATEGORY_SYSTEM_BOOKMARKS,
++                              android_shared_items[i].path,
++                              android_shared_items[i].name,
++                              android_shared_items[i].icon,
++                              FS_INSERT_LAST);
++        }
++      }
++    }
++#else
+     /* Follow the XDG spec, check if these are available. */
+     GHash *xdg_map = fsmenu_xdg_user_dirs_parse(home);
+ 
+@@ -177,12 +217,15 @@
+     }
+ 
+     fsmenu_xdg_user_dirs_free(xdg_map);
++#endif
+   }
+ 
+   {
+     bool found = false;
+-#ifdef __linux__
+-    /* loop over mount points */
++#if defined(__linux__) && !defined(__ANDROID__)
++    /* android-port: skipped on Android - `/proc/mounts` there lists many entries that are
++     * not browsable (the FUSE shared-storage mount points among them), which only clutters
++     * the sidebar. The shared-storage roots are added above instead. */
+     mntent *mnt;
+     FILE *fp;
+ 
+--- a/source/blender/blenkernel/intern/appdir.cc
++++ b/source/blender/blenkernel/intern/appdir.cc
+@@ -138,6 +138,22 @@
+ 
+ const char *BKE_appdir_folder_default()
+ {
++#ifdef __ANDROID__
++  /* android-port: an Android app has no user visible `$HOME` (`HOME` points into the
++   * app private data directory, which is not reachable with a file manager), the closest
++   * equivalent of "the user's documents" is the emulated shared storage.
++   * Prefer a directory that is also writable, so "Save As" works out of the box. */
++  static const char *android_default_dirs[] = {
++      "/storage/emulated/0/Download",
++      "/storage/emulated/0/Documents",
++      "/storage/emulated/0",
++  };
++  for (const char *dir : android_default_dirs) {
++    if (BLI_is_dir(dir)) {
++      return dir;
++    }
++  }
++#endif
+ #ifndef WIN32
+   return BLI_dir_home();
+ #else  /* Windows */
+diff --git a/source/creator/creator_android_libcxx_compat.cc b/source/creator/creator_android_libcxx_compat.cc
+new file mode 100644
+--- /dev/null
++++ b/source/creator/creator_android_libcxx_compat.cc
++/* SPDX-FileCopyrightText: 2026 Blender Authors
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later */
++
++/** \file
++ * \ingroup creator
++ *
++ * Link compatibility shim for the pre-compiled Android dependencies.
++ *
++ * `libshaderc_combined.a` from `lib/android_arm64` was built against a libc++ that still
++ * exported `std::__ndk1::__hash_memory`, which the libc++ shipped with Android NDK r28
++ * (LLVM 19) no longer provides. It is referenced from `std::hash` for strings inside
++ * shaderc, so the final `libblender.so` link fails with:
++ *
++ *   ld.lld: error: undefined symbol: std::__ndk1::__hash_memory(void const*, unsigned long)
++ *
++ * The definition below is byte-for-byte the behavior libc++ used to have, and is also
++ * identical to what the current libc++ headers do in `__do_string_hash`, so hash values
++ * stay consistent within the pre-built library.
++ *
++ * This file is part of the `blender` target itself rather than a static library, so the
++ * definition is unconditionally present in the link and cannot be dropped by archive
++ * ordering (shaderc appears after most Blender libraries on the link line).
++ *
++ * The symbol must also be *exported*: it is not only referenced by the statically linked
++ * shaderc, but also by 18 of the bundled shared libraries (`libtbb.so`, `libOpenImageIO.so`,
++ * the MaterialX and OpenColorIO libraries, ...), which were all built against a libc++
++ * that exported it. Blender compiles with `-fvisibility=hidden`, so an explicit default
++ * visibility attribute is required here; `libblender.so` is the root of the library load
++ * group, so its exports are visible to all of its dependencies at relocation time.
++ */
++
++#include <cstddef>
++
++#include <__functional/hash.h>
++
++namespace std {
++inline namespace __ndk1 {
++
++__attribute__((visibility("default"))) size_t __hash_memory(const void *ptr, size_t size) noexcept
++{
++  return __murmur2_or_cityhash<size_t>()(ptr, size);
++}
++
++}  // namespace __ndk1
++}  // namespace std

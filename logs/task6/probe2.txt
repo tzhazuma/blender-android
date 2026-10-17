@@ -1,0 +1,66 @@
+=== prefs filepaths (all attrs) ===
+  fp.active_asset_library = 0
+  fp.animation_player = ''
+  fp.animation_player_preset = 'INTERNAL'
+  fp.asset_libraries = <bpy_collection[0], AssetLibraryCollection>
+  fp.auto_save_time = 2
+  fp.bl_rna = <bpy_struct, Struct("PreferencesFilePaths") at 0xb400006f4c047970>
+  fp.file_preview_type = 'AUTO'
+  fp.font_directory = '//'
+  fp.i18n_branches_directory = ''
+  fp.image_editor = ''
+  fp.recent_files = 200
+  fp.render_cache_directory = ''
+  fp.render_output_directory = '//'
+  fp.rna_type = <bpy_struct, Struct("PreferencesFilePaths") at 0xb400006f4c047970>
+  fp.save_modified_images = 'ASK'
+  fp.save_version = 1
+  fp.script_directories = <bpy_collection[0], ScriptDirectoryCollection>
+  fp.show_hidden_files_datablocks = True
+  fp.show_recent_locations = True
+  fp.show_system_bookmarks = True
+  fp.sound_directory = '//'
+  fp.temporary_directory = ''
+  fp.text_editor = ''
+  fp.text_editor_args = ''
+  fp.texture_cache_directory = ''
+  fp.texture_directory = '//'
+  fp.use_auto_save_temporary_files = True
+  fp.use_extension_online_access_handled = False
+  fp.use_file_compression = True
+  fp.use_filter_files = True
+  fp.use_load_ui = True
+  fp.use_relative_paths = True
+  fp.use_scripts_auto_execute = False
+  fp.use_tabs_as_spaces = True
+=== dirs exist? ===
+  isdir(/data/user/0/org.blender.blender/files/home)=True isfile=False exists=True
+  isdir(/storage/emulated/0/Download)=True isfile=False exists=True
+  isdir(/storage/emulated/0/Documents)=True isfile=False exists=True
+  isdir(/storage/emulated/0)=True isfile=False exists=True
+  isdir(/)=True isfile=False exists=True
+  isdir(/storage/emulated)=True isfile=False exists=True
+  isdir(/storage)=True isfile=False exists=True
+  isdir(/mnt/user/0/emulated)=False isfile=False exists=False
+=== make test dirs ===
+  makedirs /storage/emulated/0/Download/BlenderProbe -> True
+  makedirs /storage/emulated/0/Documents/BlenderProbe -> True
+=== save/open round trips ===
+SAVE apphome    /data/user/0/org.blender.blender/files/home/roundtrip_home.blend ret={'FINISHED'} exists=True size=95597
+OPEN apphome    /data/user/0/org.blender.blender/files/home/roundtrip_home.blend ret={'FINISHED'} bpy.data.filepath='/data/user/0/org.blender.blender/files/home/roundtrip_home.blend'
+SAVE download   /storage/emulated/0/Download/BlenderProbe/roundtrip_download.blend ret={'FINISHED'} exists=True size=95599
+OPEN download   /storage/emulated/0/Download/BlenderProbe/roundtrip_download.blend ret={'FINISHED'} bpy.data.filepath='/storage/emulated/0/Download/BlenderProbe/roundtrip_download.blend'
+SAVE documents  /storage/emulated/0/Documents/BlenderProbe/roundtrip_documents.blend ret={'FINISHED'} exists=True size=95599
+OPEN documents  /storage/emulated/0/Documents/BlenderProbe/roundtrip_documents.blend ret={'FINISHED'} bpy.data.filepath='/storage/emulated/0/Documents/BlenderProbe/roundtrip_documents.blend'
+SAVE sdcard_root /storage/emulated/0/roundtrip_root.blend                     EXC RuntimeError: Error: Cannot open file /storage/emulated/0/roundtrip_root.blend@ for writing: Operation not permitted
+
+=== startup dir resolution (what the file browser would default to) ===
+=== operator filepath defaults ===
+  wm.open_mainfile: ''
+  wm.save_as_mainfile: ''
+  wm.save_as_mainfile_copy: 'ERR:KeyError:\'get_rna_type("WM_OT_save_as_mainfile_copy") not found\''
+=== resource / script paths ===
+  resource_path LOCAL=/data/user/0/org.blender.blender/files/extract/5.3
+  user_resource=/data/user/0/org.blender.blender/files/home/.config/blender/5.3/config
+  script_paths=['/data/user/0/org.blender.blender/files/extract/5.3/scripts']
+  addon count=8
