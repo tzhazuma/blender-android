@@ -1,0 +1,272 @@
+--- a/source/creator/creator_android_saf.cc	2026-10-17 21:52:48
++++ b/source/creator/creator_android_saf.cc	2026-10-17 21:52:48
+@@ -0,0 +1,261 @@
++/* SPDX-FileCopyrightText: 2026 Blender Authors
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later */
++
++/** \file
++ * \ingroup creator
++ *
++ * Storage Access Framework bridge for Android.
++ *
++ * Blender opens POSIX paths everywhere: BLI_file, the file browser, importers, exporters and the
++ * render output path all take a \c char* that goes straight to \c open(2). Android hands out
++ * \c content:// URIs, which those cannot use.
++ *
++ * The Java half (BlenderActivity.safPickOpen / safPickSave / safIsDone / safSaveDone /
++ * safHasSaveUri / safPublish) copies a picked document into \c filesDir/incoming/ and writes the
++ * real paths to \c filesDir/saf-manifest.txt. This file drives that from C and hands Blender a
++ * plain path, so nothing above this layer has to know Android exists.
++ *
++ * Results travel through the filesystem rather than JNI arrays on purpose: a multi-file selection
++ * of arbitrary size never has to be marshalled, and the JNI surface stays at six calls.
++ */
++
++#ifdef __ANDROID__
++
++#  include <SDL3/SDL.h>
++#  include <jni.h>
++
++#  include <cstdio>
++#  include <cstring>
++#  include <string>
++#  include <vector>
++
++#  include "BLI_path_utils.hh"
++#  include "BLI_string.hh"
++
++namespace blender {
++
++/** Long enough for a user to browse, short enough that a stuck picker cannot wedge Blender. */
++static const int SAF_PICK_TIMEOUT_MS = 300000;
++/** How often the picker flag is polled. 250 ms keeps the UI feeling responsive. */
++static const int SAF_POLL_MS = 250;
++
++/** The Activity and the environment, both owned by SDL; do not release. */
++struct SafEnv {
++  JNIEnv *env = nullptr;
++  jobject activity = nullptr;
++
++  bool valid() const
++  {
++    return env != nullptr && activity != nullptr;
++  }
++};
++
++/** Fetch the JNI environment and the running Activity from SDL. */
++static SafEnv saf_env()
++{
++  SafEnv e;
++  e.env = static_cast<JNIEnv *>(SDL_GetAndroidJNIEnv());
++  e.activity = static_cast<jobject>(SDL_GetAndroidActivity());
++  return e;
++}
++
++/** Milliseconds since an arbitrary point; only differences are used. */
++static long long saf_now_ms()
++{
++  return static_cast<long long>(SDL_GetTicks());
++}
++
++/**
++ * Call a no-argument method on the Activity.
++ * Returns false when the lookup or the call fails, and clears the pending exception so a missing
++ * method cannot leave the JVM in a throwing state that breaks the next call.
++ */
++static bool saf_call_void(JNIEnv *env, jobject activity, const char *name)
++{
++  jclass cls = env->GetObjectClass(activity);
++  if (cls == nullptr) {
++    return false;
++  }
++  jmethodID mid = env->GetMethodID(cls, name, "()V");
++  env->DeleteLocalRef(cls);
++  if (mid == nullptr) {
++    env->ExceptionClear();
++    fprintf(stderr, "SAF: no method %s()V on the activity\n", name);
++    return false;
++  }
++  env->CallVoidMethod(activity, mid);
++  if (env->ExceptionCheck()) {
++    env->ExceptionDescribe();
++    env->ExceptionClear();
++    return false;
++  }
++  return true;
++}
++
++/** Call a boolean no-argument method; false on any failure. */
++static bool saf_call_bool(JNIEnv *env, jobject activity, const char *name)
++{
++  jclass cls = env->GetObjectClass(activity);
++  if (cls == nullptr) {
++    return false;
++  }
++  jmethodID mid = env->GetMethodID(cls, name, "()Z");
++  env->DeleteLocalRef(cls);
++  if (mid == nullptr) {
++    env->ExceptionClear();
++    fprintf(stderr, "SAF: no method %s()Z on the activity\n", name);
++    return false;
++  }
++  jboolean result = env->CallBooleanMethod(activity, mid);
++  if (env->ExceptionCheck()) {
++    env->ExceptionDescribe();
++    env->ExceptionClear();
++    return false;
++  }
++  return result == JNI_TRUE;
++}
++
++/** Poll \a flag until it is true or the timeout expires. */
++static bool saf_wait_for(JNIEnv *env, jobject activity, const char *flag)
++{
++  const long long deadline = saf_now_ms() + SAF_PICK_TIMEOUT_MS;
++  while (saf_now_ms() < deadline) {
++    if (saf_call_bool(env, activity, flag)) {
++      return true;
++    }
++    SDL_Delay(SAF_POLL_MS);
++  }
++  fprintf(stderr, "SAF: %s did not become true within %d ms\n", flag, SAF_PICK_TIMEOUT_MS);
++  return false;
++}
++
++/** \return the app's private data directory, which is where Java writes its manifest. */
++static std::string saf_files_dir()
++{
++  /* SDL_GetAndroidInternalStoragePath is getFilesDir(), which is exactly where the Java half
++   * writes saf-manifest.txt. (Checked against SDL_system.h: the external one is a different
++   * function, SDL_GetAndroidExternalStoragePath, and needs a permission.) */
++  const char *path = SDL_GetAndroidInternalStoragePath();
++  return path != nullptr ? std::string(path) : std::string();
++}
++
++/**
++ * Run the open picker and return the real paths the user chose.
++ *
++ * The returned paths point inside \c filesDir/incoming/ -- the documents were copied there by the
++ * Java side, so callers can treat them as ordinary files that will outlive the URI grant.
++ */
++std::vector<std::string> android_saf_pick_open()
++{
++  SafEnv e = saf_env();
++  if (!e.valid()) {
++    fprintf(stderr, "SAF: no JNI environment or activity; cannot open the picker\n");
++    return {};
++  }
++  if (!saf_call_void(e.env, e.activity, "safPickOpen")) {
++    return {};
++  }
++  if (!saf_wait_for(e.env, e.activity, "safIsDone")) {
++    return {};
++  }
++
++  std::vector<std::string> paths;
++  const std::string manifest = saf_files_dir() + "/saf-manifest.txt";
++  FILE *fp = fopen(manifest.c_str(), "r");
++  if (fp == nullptr) {
++    fprintf(stderr, "SAF: no manifest at %s (nothing was picked)\n", manifest.c_str());
++    return paths;
++  }
++  char line[4096];
++  while (fgets(line, sizeof(line), fp) != nullptr) {
++    size_t len = strlen(line);
++    while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
++      line[--len] = '\0';
++    }
++    if (len > 0) {
++      paths.emplace_back(line);
++    }
++  }
++  fclose(fp);
++  return paths;
++}
++
++/**
++ * Ask where a finished file should land.
++ *
++ * \param suggested_name: shown to the user as the default file name.
++ * \return true when a destination was chosen; \ref android_saf_publish then spends it.
++ */
++bool android_saf_pick_save(const char *suggested_name)
++{
++  SafEnv e = saf_env();
++  if (!e.valid()) {
++    fprintf(stderr, "SAF: no JNI environment or activity; cannot open the save picker\n");
++    return false;
++  }
++
++  jclass cls = e.env->GetObjectClass(e.activity);
++  if (cls == nullptr) {
++    return false;
++  }
++  jmethodID mid = e.env->GetMethodID(cls, "safPickSave", "(Ljava/lang/String;)V");
++  e.env->DeleteLocalRef(cls);
++  if (mid == nullptr) {
++    e.env->ExceptionClear();
++    fprintf(stderr, "SAF: no method safPickSave(String)V on the activity\n");
++    return false;
++  }
++  jstring jname = e.env->NewStringUTF(suggested_name != nullptr ? suggested_name : "export");
++  e.env->CallVoidMethod(e.activity, mid, jname);
++  e.env->DeleteLocalRef(jname);
++  if (e.env->ExceptionCheck()) {
++    e.env->ExceptionDescribe();
++    e.env->ExceptionClear();
++    return false;
++  }
++
++  if (!saf_wait_for(e.env, e.activity, "safSaveDone")) {
++    return false;
++  }
++  return saf_call_bool(e.env, e.activity, "safHasSaveUri");
++}
++
++/**
++ * Copy a finished file to the destination the save picker returned.
++ *
++ * \param path: an ordinary POSIX path Blender just wrote.
++ * \return true when the bytes were delivered.
++ */
++bool android_saf_publish(const char *path)
++{
++  SafEnv e = saf_env();
++  if (!e.valid() || path == nullptr) {
++    return false;
++  }
++
++  jclass cls = e.env->GetObjectClass(e.activity);
++  if (cls == nullptr) {
++    return false;
++  }
++  jmethodID mid = e.env->GetMethodID(cls, "safPublish", "(Ljava/lang/String;)Z");
++  e.env->DeleteLocalRef(cls);
++  if (mid == nullptr) {
++    e.env->ExceptionClear();
++    fprintf(stderr, "SAF: no method safPublish(String)Z on the activity\n");
++    return false;
++  }
++  jstring jpath = e.env->NewStringUTF(path);
++  jboolean ok = e.env->CallBooleanMethod(e.activity, mid, jpath);
++  e.env->DeleteLocalRef(jpath);
++  if (e.env->ExceptionCheck()) {
++    e.env->ExceptionDescribe();
++    e.env->ExceptionClear();
++    return false;
++  }
++  return ok == JNI_TRUE;
++}
++
++}  // namespace blender
++
++#endif /* __ANDROID__ */
+
+--- a/source/creator/CMakeLists.txt
++++ b/source/creator/CMakeLists.txt
+@@ -343,6 +343,7 @@
+     creator_args.cc
+     creator_android.cc
++  creator_android_saf.cc
+     creator_android_libcxx_compat.cc

@@ -758,3 +758,61 @@ Blender 用 **SDL3**（`BlenderActivity extends SDLActivity`），不是 GameAct
 
 （这比 `-fsyntax-only` 有用得多：那个参数 javac 直接报「无效的标记」，
 等于什么都没检查，但输出看起来像「没输出=通过」，很容易误判。）
+
+---
+
+## 第 64 轮：Blender SAF 原生侧（`creator_android_saf.cc`，261 行）
+
+### SDL3 正好提供了需要的一切
+
+```
+SDL_GetAndroidJNIEnv()              → JNIEnv*
+SDL_GetAndroidActivity()            → jobject（Activity）
+SDL_GetAndroidInternalStoragePath() → getFilesDir()
+SDL_GetTicks() / SDL_Delay()        → 轮询计时
+```
+
+不需要 `ndk_context`，也不需要自己找 `JavaVM` —— Blender 用 SDL3，SDL 已经把这些
+都握在手里。
+
+### 三个公开函数
+
+```cpp
+std::vector<std::string> android_saf_pick_open();
+bool android_saf_pick_save(const char *suggested_name);
+bool android_saf_publish(const char *path);
+```
+
+它们对应 Java 侧那六个方法，内部封装了「发请求 → 轮询完成标志 → 读 manifest
+/ 拷文件」这三段。
+
+### 几个刻意的设计决定
+
+1. **每次调用都重新查 `jmethodID`** —— 缓存 JNI 方法 ID 是常见优化，但 JVM 的
+   `jmethodID` 在类被卸载时会失效，而这里调用频率极低（用户点一次文件菜单一次），
+   缓存省不下什么，失效却是难查的偶发崩溃。
+
+2. **`ExceptionClear()` 在每次查找失败之后** —— 如果 `GetMethodID` 返回空而
+   不清理异常，JVM 会停在「有待决异常」状态，**下一次 JNI 调用会立刻失败**，
+   表现为「第一次点没反应，之后全都不能用」。这是漏掉清理的典型症状。
+
+3. **超时 300 秒、轮询 250 ms** —— 足够用户浏览，又不至于卡死。
+
+4. **结果走文件系统**（`saf-manifest.txt`）而不是 JNI 数组 —— 多选任意数量都不用
+   marshal，JNI 表面保持六个方法。
+
+### 一个自我纠正
+
+第一版 `saf_files_dir()` 用了 `SDL_GetAndroidInternalStoragePath()`，我一度以为
+那返回的是**外部**存储，于是写了一堆「从 `/Android/data/<pkg>/files` 反推
+`/data/user/0/<pkg>/files`」的代码。
+
+**其实函数名已经说明了一切** —— `Internal` 就是 `getFilesDir()`。查了
+`SDL_system.h` 确认后改回一行。教训：先读名字和文档，再写推导逻辑。
+
+### 还差最后一步
+
+函数写好了，但**还没有任何调用点** —— `wm_file_open`、文件浏览器、导入/导出、
+渲染输出都还没接到它上面。然后是重建 Blender（13 GB 树，1–2 小时）。
+
+这一轮交付的是「可以接线的原生桥」，不是「能用的文件对话框」。
