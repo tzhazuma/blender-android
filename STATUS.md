@@ -1211,3 +1211,65 @@ adb shell pidof com.android.filemanager
 
 **教训：跨进程/跨 Activity 的回调，最危险的不是「回调失败」，而是「回调永远不来」。**
 任何「阻塞等待 + 系统弹窗」的组合，都要问一句：阻塞的那条线程，是不是别人等你让路的那条？
+
+---
+
+## 第 72 轮：发布，以及 Open 还差最后一步
+
+### 已完成的设备证据
+
+```
+# 顶层 Activity：File > Open 弹出的是 vivo 文件管理器（不是 documentsui）
+topResumedActivity=ActivityRecord{260705659 u0 com.android.filemanager/.selector.view.SelectorHomeActivity t710 d0}
+$ adb shell pidof com.android.filemanager
+12871
+
+# File > Save As 保存出来的真实文件
+$ adb shell ls -l /sdcard/Download/usr/saf-test.blend
+-rw-rw---- 1 u0_a0 media_rw 98636 2026-10-20 03:03 /sdcard/Download/usr/saf-test.blend
+
+# 两阶段保存的中间文件（Blender 写在这里，再由 safPublish 流出去）
+$ adb shell run-as org.blender.blender ls -l files/export/
+-rw------- 1 u0_a432 u0_a432 98636 2026-10-20 03:03 Untitled.blend
+-rw------- 1 u0_a432 u0_a432 97871 2026-10-20 02:43 Untitled.blend1
+```
+
+黑屏修复后的返回：`mCurrentFocus=org.blender.blender/org.blender.blender.BlenderActivity`，
+截图是完整 UI，进程存活。
+
+### 还差的一步：Open 的「选中并确认」
+
+`File > Open` 能稳定弹出选择器（上面的 topResumedActivity/pidof 就是证据），
+选择器里也能看到 `saf-test.blend`（98.64 KB，03:03），
+但 **在 vivo 选择器里选中文件并点「完成」这一步没能稳定走完**：
+
+- 这台设备同时被另外 3 个 agent 使用（dsh / freecad / octave / artcraft），
+  每隔 30–60 秒就有安装确认框或其他 App 抢前台；
+- vivo 选择器在「有跨目录选中项」时会弹「是否放弃已选择的文件？」确认框，
+  点「完成」经常落在这个确认框后面；
+- 一旦被抢前台，`startActivityForResult` 就返回 cancel，
+  `saf-manifest.txt` 被清空（空文件，03:26 那次就是）。
+
+所以 **save 是端到端证明的**（文件真的出现在 Downloads，字节数对得上），
+**open 证明到「选择器已弹出、文件在列表里」**，缺的是最后那一下确认。
+
+这不是代码路径的问题：open 和 save 共用同一套 Java 复制/清单逻辑和同一个
+`SDL_PumpEvents` 等待循环。要补齐这一条，只需要一段没有其他 agent 干扰的时间，
+在设备上操作一次：File > Open → 选择器 → 勾选 saf-test.blend → 完成。
+
+### 发布
+
+- commit `172cbb9`（源码树 + 四个重新生成的补丁 + `tools/make_icons.sh` + 本文）
+- APK：307,163,323 字节
+  `sha256=dd6d8f182a38864d69562ca2f9a49da51f2371ab5cfa72c9f39c0aabb49f554b`
+- GitHub Release `android-v2`（资产 `blender-5.3.0-alpha-android-arm64-v8a.apk`）
+- 图标：`aapt2 dump badging` → `application: label='Blender'
+  icon='res/mipmap-anydpi-v26/ic_launcher.xml'`，
+  `aapt2 dump resources` 里三个 mipmap 资源都有 mdpi..xxxhdpi 的 webp。
+
+### 教训
+
+**多智能体共享一台真机时，「能不能跑」和「能不能验证」是两个问题。**
+代码路径可以靠一次成功的 save 和一次成功的 picker 弹出证明；
+但依赖 UI 时序的端到端验证，在设备被并发占用时无法复现 ——
+这时应该先把能证明的证明掉、把缺口和缺口的原因写清楚，而不是反复重试直到随机成功。
