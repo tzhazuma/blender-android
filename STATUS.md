@@ -1031,3 +1031,183 @@ Embree 那个错误看起来像一个具体的、可修的问题，实际上它�
 
 判断依据不是「还剩几个错」，而是「这个错误是列表里的第几个」。修完第一个立刻
 出现第二个、且两者都是同一个阶段（CMake configure）的依赖查找 —— 这就是信号。
+
+---
+
+## 第 69 轮：host_tools 的真正修法 —— 补宿主依赖，而不是关掉功能
+
+上一轮把 Embree/manifold/draco 当成「要逐个安装的软件包」，方向对了一半：
+它们确实缺，但缺的原因是 **`lib/macos_arm64` 是 `--filter=blob:none --sparse` 克隆**，
+里面只有 `osl python openexr imath tbb openimageio opencolorio openjph` 这几个目录。
+Blender 官方 lib 仓库里这些依赖全都有，只是没 checkout。
+
+修法不是 `brew install` 一堆版本可能不匹配的东西，而是让官方依赖树完整：
+
+```bash
+git lfs install                     # 仓库用 LFS 存 .a/.dylib，没有它 checkout 出来是空的
+cd src/blender/lib/macos_arm64
+git sparse-checkout add draco manifold meshoptimizer gmp haru potrace \
+                          rubberband zstd openvdb fftw3 sse2neon
+```
+
+然后 `host_tools` 的 configure 一次通过，`makesdna`/`makesrna` 正常重建。
+（Embree 仍用 Homebrew 4.4.1 的符号链接，因为官方 macos 目录里那份和 brew 的 ABI 一致。）
+
+**教训：看到 `Could not find X` 时，先问「X 本来应该从哪来」，而不是「怎么把 X 装进系统」。**
+官方依赖仓库 + sparse-checkout 是 Blender 交叉编译的标准宿主依赖来源。
+
+---
+
+## 第 70 轮：SAF 钩子从来就没编译过
+
+上一轮说「代码侧没有已知问题」，这句话是错的 —— 只是没人编译过它。
+
+恢复 `source/creator/CMakeLists.txt` 里那两行之后，第一次真正编译 `file_ops.cc` 就炸了：
+
+```
+error: use of undeclared identifier 'do_diropen'
+error: use of undeclared identifier 'filelist_entry_name_get'
+```
+
+两个错误说明同一件事：**钩子被贴进了错误的函数**。
+
+- `do_diropen` 只存在于 `file_select_exec`（`file_ops.cc:611`），
+  而钩子被贴进了它上面的 `file_box_select_exec`（框选）。
+- `filelist_entry_name_get` 这个 API 根本不存在；现有的等价物是
+  `filelist_entry_get_relpath` / `filelist_file_find_path`。
+
+修法：
+
+1. 把整块从 `file_box_select_exec` 移到 `file_select_exec`，放在
+   `ED_fileselect_layout_is_inside_pt` 检查之后（此时 `do_diropen` 已就绪）。
+2. 用 `ED_file_change_dir(C)` 而不是 `filelist_setdir`（前者会刷新整个浏览器状态）。
+3. 用 `filelist_file_find_path(sfile->files, params->file)` 找索引，
+   再 `filelist_entry_select_index_set` + `fileselect_file_set` 选中它。
+4. 保存对话框不走这个钩子（`sfile->op->type->idname` 是 `WM_OT_save_as_mainfile` 时跳过），
+   因为保存有自己的选择器。
+5. 两个编辑器 target 的 `CMakeLists.txt` 加 `${CMAKE_SOURCE_DIR}/source/creator` 到 include path ——
+   `creator_android_saf.hh` 在 `source/creator`，编辑器默认看不到。
+
+### Save 原本根本没有接线
+
+`android_saf_pick_save()`/`android_saf_publish()` 在上一轮只是「存在」，
+没有任何调用点。这一轮补上：
+
+- `wm_files.cc` 的 `wm_save_as_mainfile_invoke` 在 Android 上不再打开 Blender 自己的浏览器，
+  直接进 exec；
+- exec 里先弹 `ACTION_CREATE_DOCUMENT`，把 `filepath` 改写成 `<filesDir>/export/<name>`，
+  正常保存后再 `android_saf_publish()` 把字节流写进用户选的 URI；
+- 桥里新增 `android_saf_export_path()` / `android_saf_finish_save()`，
+  后者按契约轮询文件大小「稳定 1.5 秒」再发布（当前保存是同步的，所以通常一轮就够）。
+
+### Open 也改成直接弹选择器
+
+`wm_open_mainfile__select_file_path_exec`（原本是 `WM_event_add_fileselect` 打开浏览器）
+在 Android 上直接 `android_saf_pick_open()`，拿到私有目录里的真实路径后
+`RNA_string_set(filepath)` 再走原来的 `wm_open_mainfile__open`。
+
+这和 `file_ops.cc` 的钩子并不重复：前者服务 File > Open，后者服务
+Import/Export 这类仍会打开文件浏览器的流程。
+
+**教训：`git apply --check` 通过 ≠ 代码正确，更 ≠ 代码被编译过。**
+上一轮验证的是「补丁能应用」，这一轮真正编译才发现函数位置和 API 都是错的。
+验证要走到「它实际被用的那一步」：能应用 → 能编译 → 能链接 → 能运行。
+
+---
+
+## 第 71 轮：构建、装机、渲染，以及用户报的「退出选择器黑屏」
+
+### 构建与产物
+
+```bash
+cmake --install build_android
+cmake -DGRADLE_SOURCE_DIR=.../release/android ... -P platform_android_stage.cmake
+cd build_android/gradle && JAVA_HOME=/opt/homebrew/opt/openjdk@21 ./gradlew assembleRelease \
+  -PblenderVersionName=5.3.0-alpha -PblenderVersionCode=105030000 -PblenderMinSdk=29 -PblenderAbi=arm64-v8a
+```
+
+APK：`build_android/gradle/app/build/outputs/apk/release/app-release.apk`
+**307,163,323 字节**。`libblender.so` 链接后 1.99 GB，立即 strip → 160,290,904 字节。
+
+### 图标
+
+`tools/make_icons.sh` 从 **Blender 源码树里的原始 SVG**
+（`release/freedesktop/icons/scalable/apps/blender.svg`）渲染：
+
+- `mipmap-{mdpi,hdpi,xhdpi,xxhdpi,xxxhdpi}/ic_launcher.webp`（白底圆角方块）
+- 同目录 `ic_launcher_round.webp`（白底圆形）
+- `ic_launcher_foreground.webp`（108dp 透明画布，logo 落在 66dp 安全区）
+- `mipmap-anydpi-v26/*.xml` 指向 `@mipmap/ic_launcher_foreground`
+
+ImageMagick 会把「白底 + 透明」的画布自动降成灰度，直接 composite 会把彩色 logo 变灰 ——
+所以先在最上层铺白色底 + `-flatten`，再用黑白 mask 只提供 alpha（`CopyOpacity`）。
+
+`aapt2 dump badging`：
+```
+application: label='Blender' icon='res/mipmap-anydpi-v26/ic_launcher.xml'
+application-icon-160/240/320/480/640: 'res/mipmap-anydpi-v26/ic_launcher.xml'
+```
+`aapt2 dump resources` 里 `mipmap/ic_launcher`、`_round`、`_foreground` 都有 mdpi..xxxhdpi 的 webp。
+
+### 渲染
+
+安装（`pm install -r -t`，vivo 在屏幕熄灭时会回 `INSTALL_FAILED_ABORTED: User rejected permissions`，
+保持亮屏即可）后启动：
+
+```
+mCurrentFocus=org.blender.blender/org.blender.blender.BlenderActivity
+```
+
+截图里是完整的 Blender 5.3.0 Alpha：splash、3D 视口、大纲、属性面板、时间线全部渲染。
+没有 native abort。
+
+### 用户报的 bug：选择器关闭后黑屏
+
+用户实测：选择器能打开，但退出选择器后黑屏，回不到 Blender。
+
+根因不在渲染，在 **死锁**：
+
+1. `android_saf_pick_open/save` 在 Blender 的主线程里轮询 `safIsDone/safSaveDone`；
+2. 选择器覆盖 Activity → `SDLActivity.onPause()` → `pauseNativeThread()` → `nativePause()`；
+3. SDL 默认 `SDL_HINT_ANDROID_BLOCK_ON_PAUSE=1`，`nativePause()` 会**阻塞 UI 线程**，
+   等 native 线程确认进入后台；
+4. 但 native 线程正卡在 SAF 轮询循环里，从不 pump SDL 事件 → 确认永远不来；
+5. UI 线程被卡住 → `onActivityResult` 永远不执行 → 标志位永远不置位；
+6. 用户退出选择器后，`SDL_EVENT_DID_ENTER_FOREGROUND` 也没人处理，
+   GHOST 的 `vulkanLifecycleEventWatch` 不会收到事件，Vulkan surface 不重建 → 黑屏。
+
+修法（`creator_android_saf.cc` 的 `saf_wait_for`）：**每轮轮询都 `SDL_PumpEvents()`**，
+拿到结果后再 pump 一次把前台/重建事件送进队列。
+
+验证（设备上）：File > Save As → vivo 选择器 → 返回键 → 焦点回到
+`org.blender.blender/BlenderActivity`，截图是完整 UI，进程仍存活。
+
+### SAF 保存往返（设备证据）
+
+在选择器里保存为 `saf-test.blend` 后：
+
+```
+$ adb shell ls -l /sdcard/Download/usr/saf-test.blend
+-rw-rw---- 1 u0_a0 media_rw 98636 2026-10-20 03:03 /sdcard/Download/usr/saf-test.blend
+```
+
+文件是 `safPublish` 通过 `openOutputStream(content://...)` 流式写出的，
+98,636 字节正好是默认场景 .blend 的大小。
+
+### 选择器到底是谁
+
+这台 ROM 上 **OPEN/CREATE_DOCUMENT 两个入口并存**：
+
+- `ACTION_CREATE_DOCUMENT` → `com.android.documentsui/.picker.PickActivity`（真正的 DocumentsUI）
+- `ACTION_OPEN_DOCUMENT` → 一部分入口落到 `com.android.filemanager/.selector.view.SelectorHomeActivity`
+
+所以「documentsui 永远是 shim」的说法不准确：要看 action，也要看从哪个入口进。
+两个都要按真实顶层 Activity 判断：
+
+```bash
+adb shell dumpsys activity activities | grep -i topResumedActivity
+adb shell pidof com.android.filemanager
+```
+
+**教训：跨进程/跨 Activity 的回调，最危险的不是「回调失败」，而是「回调永远不来」。**
+任何「阻塞等待 + 系统弹窗」的组合，都要问一句：阻塞的那条线程，是不是别人等你让路的那条？

@@ -76,6 +76,55 @@
    /* Needed for Python modules to work. */
    Py*;
    _Py*;
+--- /dev/null
++++ b/source/creator/creator_android_libcxx_compat.cc
+@@ -0,0 +1,46 @@
++/* SPDX-FileCopyrightText: 2026 Blender Authors
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later */
++
++/** \file
++ * \ingroup creator
++ *
++ * Link compatibility shim for the pre-compiled Android dependencies.
++ *
++ * `libshaderc_combined.a` from `lib/android_arm64` was built against a libc++ that still
++ * exported `std::__ndk1::__hash_memory`, which the libc++ shipped with Android NDK r28
++ * (LLVM 19) no longer provides. It is referenced from `std::hash` for strings inside
++ * shaderc, so the final `libblender.so` link fails with:
++ *
++ *   ld.lld: error: undefined symbol: std::__ndk1::__hash_memory(void const*, unsigned long)
++ *
++ * The definition below is byte-for-byte the behavior libc++ used to have, and is also
++ * identical to what the current libc++ headers do in `__do_string_hash`, so hash values
++ * stay consistent within the pre-built library.
++ *
++ * This file is part of the `blender` target itself rather than a static library, so the
++ * definition is unconditionally present in the link and cannot be dropped by archive
++ * ordering (shaderc appears after most Blender libraries on the link line).
++ *
++ * The symbol must also be *exported*: it is not only referenced by the statically linked
++ * shaderc, but also by 18 of the bundled shared libraries (`libtbb.so`, `libOpenImageIO.so`,
++ * the MaterialX and OpenColorIO libraries, ...), which were all built against a libc++
++ * that exported it. Blender compiles with `-fvisibility=hidden`, so an explicit default
++ * visibility attribute is required here; `libblender.so` is the root of the library load
++ * group, so its exports are visible to all of its dependencies at relocation time.
++ */
++
++#include <cstddef>
++
++#include <__functional/hash.h>
++
++namespace std {
++inline namespace __ndk1 {
++
++__attribute__((visibility("default"))) size_t __hash_memory(const void *ptr, size_t size) noexcept
++{
++  return __murmur2_or_cityhash<size_t>()(ptr, size);
++}
++
++}  // namespace __ndk1
++}  // namespace std
 --- a/source/blender/editors/sculpt_paint/mesh/paint_image_3d.cc
 +++ b/source/blender/editors/sculpt_paint/mesh/paint_image_3d.cc
 @@ -438,9 +438,12 @@
@@ -226,53 +275,3 @@
  #ifndef WIN32
    return BLI_dir_home();
  #else  /* Windows */
-diff --git a/source/creator/creator_android_libcxx_compat.cc b/source/creator/creator_android_libcxx_compat.cc
-new file mode 100644
---- /dev/null
-+++ b/source/creator/creator_android_libcxx_compat.cc
-+/* SPDX-FileCopyrightText: 2026 Blender Authors
-+ *
-+ * SPDX-License-Identifier: GPL-2.0-or-later */
-+
-+/** \file
-+ * \ingroup creator
-+ *
-+ * Link compatibility shim for the pre-compiled Android dependencies.
-+ *
-+ * `libshaderc_combined.a` from `lib/android_arm64` was built against a libc++ that still
-+ * exported `std::__ndk1::__hash_memory`, which the libc++ shipped with Android NDK r28
-+ * (LLVM 19) no longer provides. It is referenced from `std::hash` for strings inside
-+ * shaderc, so the final `libblender.so` link fails with:
-+ *
-+ *   ld.lld: error: undefined symbol: std::__ndk1::__hash_memory(void const*, unsigned long)
-+ *
-+ * The definition below is byte-for-byte the behavior libc++ used to have, and is also
-+ * identical to what the current libc++ headers do in `__do_string_hash`, so hash values
-+ * stay consistent within the pre-built library.
-+ *
-+ * This file is part of the `blender` target itself rather than a static library, so the
-+ * definition is unconditionally present in the link and cannot be dropped by archive
-+ * ordering (shaderc appears after most Blender libraries on the link line).
-+ *
-+ * The symbol must also be *exported*: it is not only referenced by the statically linked
-+ * shaderc, but also by 18 of the bundled shared libraries (`libtbb.so`, `libOpenImageIO.so`,
-+ * the MaterialX and OpenColorIO libraries, ...), which were all built against a libc++
-+ * that exported it. Blender compiles with `-fvisibility=hidden`, so an explicit default
-+ * visibility attribute is required here; `libblender.so` is the root of the library load
-+ * group, so its exports are visible to all of its dependencies at relocation time.
-+ */
-+
-+#include <cstddef>
-+
-+#include <__functional/hash.h>
-+
-+namespace std {
-+inline namespace __ndk1 {
-+
-+__attribute__((visibility("default"))) size_t __hash_memory(const void *ptr, size_t size) noexcept
-+{
-+  return __murmur2_or_cityhash<size_t>()(ptr, size);
-+}
-+
-+}  // namespace __ndk1
-+}  // namespace std

@@ -1,6 +1,5 @@
-diff -ruN a/source/blender/release/android/app/src/main/java/org/blender/blender/BlenderActivity.java b/source/blender/release/android/app/src/main/java/org/blender/blender/BlenderActivity.java
---- a/source/blender/release/android/app/src/main/java/org/blender/blender/BlenderActivity.java	2026-10-17 21:55:35
-+++ b/source/blender/release/android/app/src/main/java/org/blender/blender/BlenderActivity.java	2026-10-17 21:55:35
+--- a/release/android/app/src/main/java/org/blender/blender/BlenderActivity.java
++++ b/release/android/app/src/main/java/org/blender/blender/BlenderActivity.java
 @@ -3,7 +3,9 @@
  import android.content.res.AssetManager;
  import android.content.Intent;
@@ -11,11 +10,10 @@ diff -ruN a/source/blender/release/android/app/src/main/java/org/blender/blender
  import android.system.Os;
  import android.util.Log;
  import android.view.View;
-@@ -212,5 +214,251 @@
-         }
+@@ -213,4 +215,257 @@
  
          super.onCreate(savedInstanceState);
-+    }
+     }
 +
 +    /* ---------------------------------------------------------------------------------------
 +     * Storage Access Framework bridge.
@@ -50,12 +48,16 @@ diff -ruN a/source/blender/release/android/app/src/main/java/org/blender/blender
 +        intent.addCategory(Intent.CATEGORY_OPENABLE);
 +        intent.setType("*/*");
 +        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-+        try {
-+            startActivityForResult(intent, REQ_SAF_OPEN);
-+        } catch (Exception e) {
-+            Log.w(LOG_TAG, "no activity can handle ACTION_OPEN_DOCUMENT", e);
-+            safImportDone = true;
-+        }
++        /* Called from Blender's render thread. startActivityForResult must happen on the UI
++         * thread or the picker is silently never shown. */
++        runOnUiThread(() -> {
++            try {
++                startActivityForResult(intent, REQ_SAF_OPEN);
++            } catch (Exception e) {
++                Log.w(LOG_TAG, "no activity can handle ACTION_OPEN_DOCUMENT", e);
++                safImportDone = true;
++            }
++        });
 +    }
 +
 +    /** True once the open picker has finished and filesDir/saf-manifest.txt is written. */
@@ -72,12 +74,15 @@ diff -ruN a/source/blender/release/android/app/src/main/java/org/blender/blender
 +        intent.addCategory(Intent.CATEGORY_OPENABLE);
 +        intent.setType("*/*");
 +        intent.putExtra(Intent.EXTRA_TITLE, suggestedName);
-+        try {
-+            startActivityForResult(intent, REQ_SAF_SAVE);
-+        } catch (Exception e) {
-+            Log.w(LOG_TAG, "no activity can handle ACTION_CREATE_DOCUMENT", e);
-+            safSaveDone = true;
-+        }
++        /* Same reason as safPickOpen: the caller is the render thread. */
++        runOnUiThread(() -> {
++            try {
++                startActivityForResult(intent, REQ_SAF_SAVE);
++            } catch (Exception e) {
++                Log.w(LOG_TAG, "no activity can handle ACTION_CREATE_DOCUMENT", e);
++                safSaveDone = true;
++            }
++        });
 +    }
 +
 +    public boolean safSaveDone() {
@@ -261,5 +266,5 @@ diff -ruN a/source/blender/release/android/app/src/main/java/org/blender/blender
 +            name = "imported";
 +        }
 +        return name.replace('/', '_');
-     }
++    }
  }

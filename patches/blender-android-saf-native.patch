@@ -1,19 +1,17 @@
-diff -ruN a/source/creator/CMakeLists.txt b/source/creator/CMakeLists.txt
---- a/source/creator/CMakeLists.txt	2026-10-17 21:55:24
-+++ b/source/creator/CMakeLists.txt	2026-10-17 21:55:24
+--- a/source/creator/CMakeLists.txt
++++ b/source/creator/CMakeLists.txt
 @@ -343,6 +343,8 @@
  elseif(ANDROID)
    list(APPEND SRC
      creator_android.cc
-+  creator_android_saf.cc
-+  creator_android_saf_stub.cc
++    creator_android_saf.cc
++    creator_android_saf_stub.cc
    )
    list(APPEND LIB
      bf::dependencies::optional::sdl
-diff -ruN a/source/creator/creator_android_saf.cc b/source/creator/creator_android_saf.cc
---- a/source/creator/creator_android_saf.cc	1970-01-01 08:00:00
-+++ b/source/creator/creator_android_saf.cc	2026-10-17 21:55:24
-@@ -0,0 +1,263 @@
+--- /dev/null
++++ b/source/creator/creator_android_saf.cc
+@@ -0,0 +1,323 @@
 +/* SPDX-FileCopyrightText: 2026 Blender Authors
 + *
 + * SPDX-License-Identifier: GPL-2.0-or-later */
@@ -40,6 +38,7 @@ diff -ruN a/source/creator/creator_android_saf.cc b/source/creator/creator_andro
 +
 +#  include <SDL3/SDL.h>
 +#  include <jni.h>
++#  include <sys/stat.h>
 +
 +#  include <cstdio>
 +#  include <cstring>
@@ -274,13 +273,71 @@ diff -ruN a/source/creator/creator_android_saf.cc b/source/creator/creator_andro
 +  return ok == JNI_TRUE;
 +}
 +
++/**
++ * Real path inside \c filesDir/export that a save should be written to first.
++ *
++ * Only the base name of \a suggested_name is kept: the picker's job is to choose the directory,
++ * and a suggested name that happens to contain slashes must not escape the export directory.
++ */
++std::string android_saf_export_path(const char *suggested_name)
++{
++  const std::string files_dir = saf_files_dir();
++  if (files_dir.empty()) {
++    return {};
++  }
++  const std::string export_dir = files_dir + "/export";
++  mkdir(export_dir.c_str(), 0770);
++
++  std::string name = suggested_name != nullptr ? suggested_name : "";
++  const size_t slash = name.find_last_of('/');
++  if (slash != std::string::npos) {
++    name = name.substr(slash + 1);
++  }
++  if (name.empty()) {
++    name = "untitled.blend";
++  }
++  return export_dir + "/" + name;
++}
++
++/**
++ * Wait until the scratch file stops growing, then hand it to the Java half for the URI copy.
++ *
++ * Blender writes the file synchronously before this runs, so the wait is normally one iteration;
++ * it exists so the two-stage save cannot publish a partially written file if a future save path
++ * ever becomes asynchronous.
++ */
++bool android_saf_finish_save(const char *path)
++{
++  if (path == nullptr) {
++    return false;
++  }
++  const long long deadline = saf_now_ms() + 30000;
++  long long last_size = -1;
++  long long stable_ms = 0;
++  while (saf_now_ms() < deadline) {
++    struct stat st;
++    const long long size = (stat(path, &st) == 0) ? static_cast<long long>(st.st_size) : -1;
++    if (size > 0 && size == last_size) {
++      stable_ms += SAF_POLL_MS;
++      if (stable_ms >= 1500) {
++        break;
++      }
++    }
++    else {
++      stable_ms = 0;
++      last_size = size;
++    }
++    SDL_Delay(SAF_POLL_MS);
++  }
++  return android_saf_publish(path);
++}
++
 +}  // namespace blender
 +
 +#endif /* __ANDROID__ */
-diff -ruN a/source/creator/creator_android_saf.hh b/source/creator/creator_android_saf.hh
---- a/source/creator/creator_android_saf.hh	1970-01-01 08:00:00
-+++ b/source/creator/creator_android_saf.hh	2026-10-17 21:55:24
-@@ -0,0 +1,49 @@
+--- /dev/null
++++ b/source/creator/creator_android_saf.hh
+@@ -0,0 +1,65 @@
 +/* SPDX-FileCopyrightText: 2026 Blender Authors
 + *
 + * SPDX-License-Identifier: GPL-2.0-or-later */
@@ -329,11 +386,26 @@ diff -ruN a/source/creator/creator_android_saf.hh b/source/creator/creator_andro
 +/** Copy an already written file to the destination \ref android_saf_pick_save returned. */
 +bool android_saf_publish(const char *path);
 +
++/**
++ * Real path inside \c filesDir/export that a save should be written to before publishing.
++ *
++ * Blender writes ordinary files, so a save is two-stage: it writes here, then
++ * \ref android_saf_finish_save streams the result to the document URI the picker returned.
++ * Empty when the bridge is unavailable (every non-Android build).
++ */
++std::string android_saf_export_path(const char *suggested_name);
++
++/**
++ * Wait for the scratch file's size to settle, then copy it to the chosen document URI.
++ *
++ * \return true when the bytes were delivered to the user's destination.
++ */
++bool android_saf_finish_save(const char *path);
++
 +}  // namespace blender
-diff -ruN a/source/creator/creator_android_saf_stub.cc b/source/creator/creator_android_saf_stub.cc
---- a/source/creator/creator_android_saf_stub.cc	1970-01-01 08:00:00
-+++ b/source/creator/creator_android_saf_stub.cc	2026-10-17 21:55:24
-@@ -0,0 +1,36 @@
+--- /dev/null
++++ b/source/creator/creator_android_saf_stub.cc
+@@ -0,0 +1,46 @@
 +/* SPDX-FileCopyrightText: 2026 Blender Authors
 + *
 + * SPDX-License-Identifier: GPL-2.0-or-later */
@@ -363,6 +435,16 @@ diff -ruN a/source/creator/creator_android_saf_stub.cc b/source/creator/creator_
 +}
 +
 +bool android_saf_publish(const char * /*path*/)
++{
++  return false;
++}
++
++std::string android_saf_export_path(const char * /*suggested_name*/)
++{
++  return {};
++}
++
++bool android_saf_finish_save(const char * /*path*/)
 +{
 +  return false;
 +}
