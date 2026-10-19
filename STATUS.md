@@ -1273,3 +1273,29 @@ $ adb shell run-as org.blender.blender ls -l files/export/
 代码路径可以靠一次成功的 save 和一次成功的 picker 弹出证明；
 但依赖 UI 时序的端到端验证，在设备被并发占用时无法复现 ——
 这时应该先把能证明的证明掉、把缺口和缺口的原因写清楚，而不是反复重试直到随机成功。
+
+### 补充：Release 已发布（以及上传带宽的坑）
+
+```
+https://github.com/tzhazuma/blender-android/releases/tag/android-v2
+asset: blender-5.3.0-alpha-android-arm64-v8a.apk  (307,163,323 bytes, state=uploaded)
+```
+
+推送时 `gh` / `curl` 走 Clash TUN 只有 **~30 KB/s**，307 MB 需要 2.6 小时，
+而且连接每 13–25 分钟被重置一次（单流不可续传，永远传不完）。
+
+用真实 IP + 绑定物理网卡绕开 TUN 后是 **~10 MB/s**：
+
+```bash
+curl -X POST "https://uploads.github.com/repos/tzhazuma/blender-android/releases/$RID/assets?name=..." \
+  -H "Authorization: token $TOK" -H "Content-Type: application/octet-stream" \
+  --data-binary @app-release.apk \
+  --interface en0 --resolve uploads.github.com:443:20.205.243.161
+# 307MB / 30.5s / 10.0 MB/s
+```
+
+（`uploads.github.com` 的真实 IP 用代理经 DoH 查：`curl -x http://127.0.0.1:7897
+'https://1.1.1.1/dns-query?name=uploads.github.com&type=A' -H 'accept: application/dns-json'`。）
+
+**教训：代理的 TUN 模式会同时限制单流带宽和长连接寿命；**
+大文件上传要找一条绕过 TUN 的路（真实 IP + `--interface`），而不是反复重试。
